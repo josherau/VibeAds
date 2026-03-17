@@ -23,7 +23,10 @@ import {
   CheckCircle2,
   XCircle,
   AlertCircle,
+  Sparkles,
+  ArrowRight,
 } from "lucide-react";
+import Link from "next/link";
 import { toast } from "sonner";
 import { formatDistanceToNow, format } from "date-fns";
 import type { Database } from "@/lib/supabase/types";
@@ -39,10 +42,11 @@ export default function DashboardPage() {
   const [lastRunAt, setLastRunAt] = useState<string | null>(null);
   const [isRunning, setIsRunning] = useState(false);
   const [loading, setLoading] = useState(true);
+  const [hasBrand, setHasBrand] = useState(true);
 
   const fetchData = useCallback(async () => {
     try {
-      const [compRes, adRes, creativeRes, runsRes] = await Promise.all([
+      const [compRes, adRes, creativeRes, runsRes, brandRes] = await Promise.all([
         supabase.from("competitors").select("*", { count: "exact", head: true }),
         supabase.from("competitor_ads").select("*", { count: "exact", head: true }),
         supabase.from("generated_creatives").select("*", { count: "exact", head: true }),
@@ -51,8 +55,10 @@ export default function DashboardPage() {
           .select("*")
           .order("started_at", { ascending: false })
           .limit(10),
+        supabase.from("brands").select("id").limit(1),
       ]);
 
+      setHasBrand((brandRes.data ?? []).length > 0);
       setCompetitorCount(compRes.count ?? 0);
       setAdsCount(adRes.count ?? 0);
       setCreativesCount(creativeRes.count ?? 0);
@@ -181,6 +187,30 @@ export default function DashboardPage() {
           Run Pipeline Now
         </Button>
       </div>
+
+      {!hasBrand && (
+        <Card className="border-primary/50 bg-primary/5">
+          <CardContent className="flex flex-col items-center gap-4 py-8 sm:flex-row sm:justify-between">
+            <div className="flex items-center gap-3">
+              <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-primary">
+                <Sparkles className="h-5 w-5 text-primary-foreground" />
+              </div>
+              <div>
+                <p className="font-semibold text-lg">Get started by analyzing your brand</p>
+                <p className="text-sm text-muted-foreground">
+                  Enter your website URL and we&apos;ll set up everything automatically
+                </p>
+              </div>
+            </div>
+            <Link href="/setup">
+              <Button size="lg">
+                Start Setup
+                <ArrowRight className="ml-2 h-4 w-4" />
+              </Button>
+            </Link>
+          </CardContent>
+        </Card>
+      )}
 
       <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
         {stats.map((stat) => (

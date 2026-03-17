@@ -9,6 +9,7 @@ import {
   Brain,
   Palette,
   Settings,
+  Sparkles,
   Zap,
   Menu,
 } from "lucide-react";
@@ -22,6 +23,7 @@ import {
 } from "@/components/ui/sheet";
 
 const navItems = [
+  { href: "/setup", label: "Setup", icon: Sparkles },
   { href: "/dashboard", label: "Dashboard", icon: LayoutDashboard },
   { href: "/competitors", label: "Competitors", icon: Users },
   { href: "/intelligence", label: "Intelligence", icon: Brain },
