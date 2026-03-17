@@ -43,6 +43,7 @@ import {
   ToggleRight,
 } from "lucide-react";
 import { toast } from "sonner";
+import { useBrand } from "@/lib/brand-context";
 import type { Database } from "@/lib/supabase/types";
 
 type Competitor = Database["public"]["Tables"]["competitors"]["Row"];
@@ -59,6 +60,7 @@ const emptyForm = {
 
 export default function CompetitorsPage() {
   const supabase = createClient();
+  const { selectedBrandId, selectedBrand, loading: brandLoading } = useBrand();
   const [competitors, setCompetitors] = useState<Competitor[]>([]);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -67,9 +69,15 @@ export default function CompetitorsPage() {
   const [form, setForm] = useState(emptyForm);
 
   const fetchCompetitors = useCallback(async () => {
+    if (!selectedBrandId) {
+      setCompetitors([]);
+      setLoading(false);
+      return;
+    }
     const { data, error } = await supabase
       .from("competitors")
       .select("*")
+      .eq("brand_id", selectedBrandId)
       .order("created_at", { ascending: false });
 
     if (error) {
@@ -78,11 +86,14 @@ export default function CompetitorsPage() {
     }
     setCompetitors(data ?? []);
     setLoading(false);
-  }, [supabase]);
+  }, [supabase, selectedBrandId]);
 
   useEffect(() => {
-    fetchCompetitors();
-  }, [fetchCompetitors]);
+    if (!brandLoading) {
+      setLoading(true);
+      fetchCompetitors();
+    }
+  }, [fetchCompetitors, brandLoading, selectedBrandId]);
 
   function openCreate() {
     setEditingId(null);
@@ -112,7 +123,14 @@ export default function CompetitorsPage() {
     }
     setSaving(true);
 
+    if (!selectedBrandId) {
+      toast.error("Please select a business first");
+      setSaving(false);
+      return;
+    }
+
     const payload = {
+      brand_id: selectedBrandId,
       name: form.name.trim(),
       website_url: form.website_url || null,
       meta_page_id: form.meta_page_id || null,
@@ -175,7 +193,7 @@ export default function CompetitorsPage() {
     }
   }
 
-  if (loading) {
+  if (loading || brandLoading) {
     return (
       <div className="flex h-96 items-center justify-center">
         <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
@@ -189,10 +207,12 @@ export default function CompetitorsPage() {
         <div>
           <h1 className="text-3xl font-bold tracking-tight">Competitors</h1>
           <p className="text-muted-foreground mt-1">
-            Track and manage your competitive landscape
+            {selectedBrand
+              ? `Competitive landscape for ${selectedBrand.name}`
+              : "Track and manage your competitive landscape"}
           </p>
         </div>
-        <Button onClick={openCreate}>
+        <Button onClick={openCreate} disabled={!selectedBrandId}>
           <Plus className="mr-2 h-4 w-4" />
           Add Competitor
         </Button>

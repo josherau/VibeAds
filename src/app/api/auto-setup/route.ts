@@ -87,7 +87,7 @@ export async function POST(request: Request) {
 
     // Parse and validate request body
     const body = await request.json();
-    const { url } = body;
+    const { url, mode } = body;
 
     if (!url || typeof url !== "string") {
       return NextResponse.json(
@@ -315,7 +315,7 @@ Important instructions:
       process.env.SUPABASE_SERVICE_ROLE_KEY!
     );
 
-    // Check if brand already exists for this user
+    // Build brand data
     const brandData = {
       user_id: user.id,
       name: analysis.brand.name,
@@ -332,28 +332,11 @@ Important instructions:
       market_sophistication_level: analysis.market_sophistication_level,
     };
 
-    const { data: existingBrand } = await supabase
-      .from("brands")
-      .select("id")
-      .eq("user_id", user.id)
-      .limit(1)
-      .single();
-
     let brand;
     let brandError;
 
-    if (existingBrand) {
-      // Update existing brand
-      const result = await supabase
-        .from("brands")
-        .update(brandData)
-        .eq("id", existingBrand.id)
-        .select()
-        .single();
-      brand = result.data;
-      brandError = result.error;
-    } else {
-      // Insert new brand
+    if (mode === "new") {
+      // Always create a new brand
       const result = await supabase
         .from("brands")
         .insert(brandData)
@@ -361,6 +344,36 @@ Important instructions:
         .single();
       brand = result.data;
       brandError = result.error;
+    } else {
+      // Legacy behavior: check if brand already exists for this user with same URL
+      const { data: existingBrand } = await supabase
+        .from("brands")
+        .select("id")
+        .eq("user_id", user.id)
+        .eq("url", url)
+        .limit(1)
+        .single();
+
+      if (existingBrand) {
+        // Update existing brand
+        const result = await supabase
+          .from("brands")
+          .update(brandData)
+          .eq("id", existingBrand.id)
+          .select()
+          .single();
+        brand = result.data;
+        brandError = result.error;
+      } else {
+        // Insert new brand
+        const result = await supabase
+          .from("brands")
+          .insert(brandData)
+          .select()
+          .single();
+        brand = result.data;
+        brandError = result.error;
+      }
     }
 
     if (brandError || !brand) {

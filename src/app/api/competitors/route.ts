@@ -55,25 +55,29 @@ export async function POST(request: Request) {
       );
     }
 
-    // Get the user's brand
-    const { data: brand } = await supabase
-      .from("brands")
-      .select("id")
-      .eq("user_id", user.id)
-      .limit(1)
-      .single();
+    // Use brand_id from body, or fall back to first brand
+    let brandId = body.brand_id;
+    if (!brandId) {
+      const { data: brand } = await supabase
+        .from("brands")
+        .select("id")
+        .eq("user_id", user.id)
+        .limit(1)
+        .single();
 
-    if (!brand) {
-      return NextResponse.json(
-        { error: "No brand found. Please create a brand in Settings first." },
-        { status: 400 }
-      );
+      if (!brand) {
+        return NextResponse.json(
+          { error: "No brand found. Please create a brand in Settings first." },
+          { status: 400 }
+        );
+      }
+      brandId = brand.id;
     }
 
     const { data, error } = await supabase
       .from("competitors")
       .insert({
-        brand_id: brand.id,
+        brand_id: brandId,
         user_id: user.id,
         name: body.name.trim(),
         website_url: body.website_url || null,

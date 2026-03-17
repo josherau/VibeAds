@@ -43,6 +43,7 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
+import { useBrand } from "@/lib/brand-context";
 import type { Database } from "@/lib/supabase/types";
 
 type Creative = Database["public"]["Tables"]["generated_creatives"]["Row"];
@@ -310,6 +311,7 @@ function PlatformVariantsSection({ creative }: { creative: Creative }) {
 
 export default function CreativesPage() {
   const supabase = createClient();
+  const { selectedBrandId, selectedBrand, loading: brandLoading } = useBrand();
   const [creatives, setCreatives] = useState<Creative[]>([]);
   const [loading, setLoading] = useState(true);
   const [selected, setSelected] = useState<Creative | null>(null);
@@ -319,9 +321,16 @@ export default function CreativesPage() {
   const [filterAngle, setFilterAngle] = useState<string>("all");
 
   const fetchCreatives = useCallback(async () => {
+    if (!selectedBrandId) {
+      setCreatives([]);
+      setLoading(false);
+      return;
+    }
+
     let query = supabase
       .from("generated_creatives")
       .select("*")
+      .eq("brand_id", selectedBrandId)
       .order("created_at", { ascending: false });
 
     if (filterPlatform !== "all") query = query.eq("platform", filterPlatform);
@@ -336,11 +345,14 @@ export default function CreativesPage() {
     }
     setCreatives(data ?? []);
     setLoading(false);
-  }, [supabase, filterPlatform, filterFormat, filterStatus, filterAngle]);
+  }, [supabase, selectedBrandId, filterPlatform, filterFormat, filterStatus, filterAngle]);
 
   useEffect(() => {
-    fetchCreatives();
-  }, [fetchCreatives]);
+    if (!brandLoading) {
+      setLoading(true);
+      fetchCreatives();
+    }
+  }, [fetchCreatives, brandLoading, selectedBrandId]);
 
   async function handleFeedback(id: string, feedback: "positive" | "negative") {
     try {
@@ -359,7 +371,7 @@ export default function CreativesPage() {
     }
   }
 
-  if (loading) {
+  if (loading || brandLoading) {
     return (
       <div className="flex h-96 items-center justify-center">
         <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
@@ -373,7 +385,9 @@ export default function CreativesPage() {
         <div>
           <h1 className="text-3xl font-bold tracking-tight">Creatives</h1>
           <p className="text-muted-foreground mt-1">
-            AI-generated ad creatives based on competitive intelligence and direct response frameworks
+            {selectedBrand
+              ? `AI-generated ad creatives for ${selectedBrand.name}`
+              : "AI-generated ad creatives based on competitive intelligence and direct response frameworks"}
           </p>
         </div>
       </div>

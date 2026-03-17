@@ -41,6 +41,7 @@ import {
 } from "lucide-react";
 import { format } from "date-fns";
 import { toast } from "sonner";
+import { useBrand } from "@/lib/brand-context";
 import type { Database, Json } from "@/lib/supabase/types";
 
 type Analysis = Database["public"]["Tables"]["competitor_analyses"]["Row"];
@@ -916,41 +917,67 @@ const tabConfig = [
 
 export default function IntelligencePage() {
   const supabase = createClient();
+  const { selectedBrandId, selectedBrand, loading: brandLoading } = useBrand();
   const [analyses, setAnalyses] = useState<Analysis[]>([]);
   const [ads, setAds] = useState<CompetitorAd[]>([]);
   const [competitors, setCompetitors] = useState<Competitor[]>([]);
   const [loading, setLoading] = useState(true);
 
   const fetchData = useCallback(async () => {
-    const [analysesRes, adsRes, competitorsRes] = await Promise.all([
+    if (!selectedBrandId) {
+      setAnalyses([]);
+      setAds([]);
+      setCompetitors([]);
+      setLoading(false);
+      return;
+    }
+
+    const [analysesRes, competitorsRes] = await Promise.all([
       supabase
         .from("competitor_analyses")
         .select("*")
+        .eq("brand_id", selectedBrandId)
         .order("created_at", { ascending: false })
         .limit(20),
       supabase
-        .from("competitor_ads")
+        .from("competitors")
         .select("*")
-        .order("created_at", { ascending: false })
-        .limit(100),
-      supabase.from("competitors").select("*").eq("is_active", true),
+        .eq("brand_id", selectedBrandId)
+        .eq("is_active", true),
     ]);
 
     if (analysesRes.error) {
       toast.error("Failed to load intelligence data");
     }
 
+    const competitorsList = competitorsRes.data ?? [];
+
+    // Fetch ads for this brand's competitors
+    let adsList: CompetitorAd[] = [];
+    if (competitorsList.length > 0) {
+      const { data: adsData } = await supabase
+        .from("competitor_ads")
+        .select("*")
+        .in("competitor_id", competitorsList.map((c) => c.id))
+        .order("created_at", { ascending: false })
+        .limit(100);
+      adsList = adsData ?? [];
+    }
+
     setAnalyses(analysesRes.data ?? []);
-    setAds(adsRes.data ?? []);
-    setCompetitors(competitorsRes.data ?? []);
+    setAds(adsList);
+    setCompetitors(competitorsList);
     setLoading(false);
-  }, [supabase]);
+  }, [supabase, selectedBrandId]);
 
   useEffect(() => {
-    fetchData();
-  }, [fetchData]);
+    if (!brandLoading) {
+      setLoading(true);
+      fetchData();
+    }
+  }, [fetchData, brandLoading, selectedBrandId]);
 
-  if (loading) {
+  if (loading || brandLoading) {
     return (
       <div className="flex h-96 items-center justify-center">
         <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
@@ -983,8 +1010,9 @@ export default function IntelligencePage() {
       <div>
         <h1 className="text-3xl font-bold tracking-tight">Intelligence</h1>
         <p className="text-muted-foreground mt-1">
-          AI-powered competitive analysis and market insights based on the Vibe
-          Marketing Playbook
+          {selectedBrand
+            ? `Competitive analysis for ${selectedBrand.name}`
+            : "AI-powered competitive analysis and market insights based on the Vibe Marketing Playbook"}
         </p>
       </div>
 

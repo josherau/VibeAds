@@ -12,6 +12,10 @@ import {
   Sparkles,
   Zap,
   Menu,
+  Building2,
+  ChevronDown,
+  Check,
+  Plus,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
@@ -21,6 +25,14 @@ import {
   SheetTrigger,
   SheetTitle,
 } from "@/components/ui/sheet";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
+import { useBrand } from "@/lib/brand-context";
 
 const navItems = [
   { href: "/setup", label: "Setup", icon: Sparkles },
@@ -30,6 +42,73 @@ const navItems = [
   { href: "/creatives", label: "Creatives", icon: Palette },
   { href: "/settings", label: "Settings", icon: Settings },
 ];
+
+function BrandSelector() {
+  const { brands, selectedBrand, setSelectedBrandId } = useBrand();
+
+  if (brands.length === 0) {
+    return (
+      <Link href="/setup">
+        <div className="flex items-center gap-2 rounded-lg border border-dashed border-border px-3 py-2 text-sm text-muted-foreground hover:border-foreground/30 hover:text-foreground transition-colors cursor-pointer">
+          <Plus className="h-4 w-4" />
+          Add a business
+        </div>
+      </Link>
+    );
+  }
+
+  return (
+    <DropdownMenu>
+      <DropdownMenuTrigger
+        render={
+          <button className="flex w-full items-center gap-2 rounded-lg border border-border bg-accent/50 px-3 py-2 text-left text-sm hover:bg-accent transition-colors">
+            <div
+              className="flex h-6 w-6 shrink-0 items-center justify-center rounded-md text-xs font-bold text-white"
+              style={{
+                backgroundColor: selectedBrand?.primary_color || "#6366f1",
+              }}
+            >
+              {selectedBrand?.name?.charAt(0).toUpperCase() || "?"}
+            </div>
+            <span className="flex-1 truncate font-medium">
+              {selectedBrand?.name || "Select business"}
+            </span>
+            <ChevronDown className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+          </button>
+        }
+      />
+      <DropdownMenuContent align="start" className="w-[calc(240px-24px)]">
+        {brands.map((brand) => (
+          <DropdownMenuItem
+            key={brand.id}
+            onClick={() => setSelectedBrandId(brand.id)}
+            className="flex items-center gap-2"
+          >
+            <div
+              className="flex h-5 w-5 shrink-0 items-center justify-center rounded text-[10px] font-bold text-white"
+              style={{
+                backgroundColor: brand.primary_color || "#6366f1",
+              }}
+            >
+              {brand.name.charAt(0).toUpperCase()}
+            </div>
+            <span className="flex-1 truncate">{brand.name}</span>
+            {brand.id === selectedBrand?.id && (
+              <Check className="h-3.5 w-3.5 text-primary" />
+            )}
+          </DropdownMenuItem>
+        ))}
+        <DropdownMenuSeparator />
+        <DropdownMenuItem
+          render={<Link href="/setup" className="flex items-center gap-2" />}
+        >
+          <Plus className="h-4 w-4" />
+          Add new business
+        </DropdownMenuItem>
+      </DropdownMenuContent>
+    </DropdownMenu>
+  );
+}
 
 function NavContent({ onNavigate }: { onNavigate?: () => void }) {
   const pathname = usePathname();
@@ -41,6 +120,11 @@ function NavContent({ onNavigate }: { onNavigate?: () => void }) {
           <Zap className="h-4 w-4 text-primary-foreground" />
         </div>
         <span className="text-lg font-bold tracking-tight">VibeAds</span>
+      </div>
+
+      {/* Brand Selector */}
+      <div className="px-3 pb-4">
+        <BrandSelector />
       </div>
 
       <nav className="flex-1 space-y-1 px-3">
@@ -67,7 +151,7 @@ function NavContent({ onNavigate }: { onNavigate?: () => void }) {
 
       <div className="border-t border-border px-4 py-4">
         <p className="text-xs text-muted-foreground">
-          VibeAds v0.1.0
+          VibeAds v0.2.0
         </p>
       </div>
     </div>

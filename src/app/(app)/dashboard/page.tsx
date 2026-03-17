@@ -29,12 +29,14 @@ import {
 import Link from "next/link";
 import { toast } from "sonner";
 import { formatDistanceToNow, format } from "date-fns";
+import { useBrand } from "@/lib/brand-context";
 import type { Database } from "@/lib/supabase/types";
 
 type PipelineRun = Database["public"]["Tables"]["pipeline_runs"]["Row"];
 
 export default function DashboardPage() {
   const supabase = createClient();
+  const { selectedBrandId, selectedBrand, brands, loading: brandLoading } = useBrand();
   const [competitorCount, setCompetitorCount] = useState(0);
   const [adsCount, setAdsCount] = useState(0);
   const [creativesCount, setCreativesCount] = useState(0);
@@ -42,50 +44,87 @@ export default function DashboardPage() {
   const [lastRunAt, setLastRunAt] = useState<string | null>(null);
   const [isRunning, setIsRunning] = useState(false);
   const [loading, setLoading] = useState(true);
-  const [hasBrand, setHasBrand] = useState(true);
 
   const fetchData = useCallback(async () => {
+    if (!selectedBrandId) {
+      setCompetitorCount(0);
+      setAdsCount(0);
+      setCreativesCount(0);
+      setPipelineRuns([]);
+      setLastRunAt(null);
+      setLoading(false);
+      return;
+    }
+
     try {
-      const [compRes, adRes, creativeRes, runsRes, brandRes] = await Promise.all([
-        supabase.from("competitors").select("*", { count: "exact", head: true }),
-        supabase.from("competitor_ads").select("*", { count: "exact", head: true }),
-        supabase.from("generated_creatives").select("*", { count: "exact", head: true }),
+      const [compRes, creativeRes, runsRes] = await Promise.all([
+        supabase
+          .from("competitors")
+          .select("*", { count: "exact", head: true })
+          .eq("brand_id", selectedBrandId),
+        supabase
+          .from("generated_creatives")
+          .select("*", { count: "exact", head: true })
+          .eq("brand_id", selectedBrandId),
         supabase
           .from("pipeline_runs")
           .select("*")
+          .eq("brand_id", selectedBrandId)
           .order("started_at", { ascending: false })
           .limit(10),
-        supabase.from("brands").select("id").limit(1),
       ]);
 
-      setHasBrand((brandRes.data ?? []).length > 0);
+      // Count ads through competitors for this brand
+      const { data: compIds } = await supabase
+        .from("competitors")
+        .select("id")
+        .eq("brand_id", selectedBrandId);
+
+      let adCount = 0;
+      if (compIds && compIds.length > 0) {
+        const { count } = await supabase
+          .from("competitor_ads")
+          .select("*", { count: "exact", head: true })
+          .in("competitor_id", compIds.map((c) => c.id));
+        adCount = count ?? 0;
+      }
+
       setCompetitorCount(compRes.count ?? 0);
-      setAdsCount(adRes.count ?? 0);
+      setAdsCount(adCount);
       setCreativesCount(creativeRes.count ?? 0);
       const runs = (runsRes.data ?? []) as PipelineRun[];
       setPipelineRuns(runs);
 
       if (runs && runs.length > 0) {
         setLastRunAt(runs[0].started_at);
+      } else {
+        setLastRunAt(null);
       }
     } catch {
       toast.error("Failed to load dashboard data");
     } finally {
       setLoading(false);
     }
-  }, [supabase]);
+  }, [supabase, selectedBrandId]);
 
   useEffect(() => {
-    fetchData();
-  }, [fetchData]);
+    if (!brandLoading) {
+      setLoading(true);
+      fetchData();
+    }
+  }, [fetchData, brandLoading, selectedBrandId]);
 
   async function runPipeline() {
+    if (!selectedBrandId) {
+      toast.error("Please select a business first");
+      return;
+    }
     setIsRunning(true);
     try {
       const res = await fetch("/api/pipeline/run", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({}),
+        body: JSON.stringify({ brand_id: selectedBrandId }),
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || "Failed to run pipeline");
@@ -161,7 +200,7 @@ export default function DashboardPage() {
     },
   ];
 
-  if (loading) {
+  if (loading || brandLoading) {
     return (
       <div className="flex h-96 items-center justify-center">
         <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
@@ -175,10 +214,12 @@ export default function DashboardPage() {
         <div>
           <h1 className="text-3xl font-bold tracking-tight">Dashboard</h1>
           <p className="text-muted-foreground mt-1">
-            Your competitive intelligence overview
+            {selectedBrand
+              ? `Competitive intelligence for ${selectedBrand.name}`
+              : "Your competitive intelligence overview"}
           </p>
         </div>
-        <Button onClick={runPipeline} disabled={isRunning}>
+        <Button onClick={runPipeline} disabled={isRunning || !selectedBrandId}>
           {isRunning ? (
             <Loader2 className="mr-2 h-4 w-4 animate-spin" />
           ) : (
@@ -188,7 +229,7 @@ export default function DashboardPage() {
         </Button>
       </div>
 
-      {!hasBrand && (
+      {brands.length === 0 && (
         <Card className="border-primary/50 bg-primary/5">
           <CardContent className="flex flex-col items-center gap-4 py-8 sm:flex-row sm:justify-between">
             <div className="flex items-center gap-3">
@@ -234,7 +275,7 @@ export default function DashboardPage() {
         <CardHeader>
           <CardTitle>Recent Pipeline Runs</CardTitle>
           <CardDescription>
-            History of your competitive intelligence pipeline executions
+            History of pipeline executions{selectedBrand ? ` for ${selectedBrand.name}` : ""}
           </CardDescription>
         </CardHeader>
         <CardContent>

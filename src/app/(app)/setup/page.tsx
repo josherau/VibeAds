@@ -32,7 +32,10 @@ import {
   Megaphone,
   BarChart3,
   X,
+  Plus,
+  Building2,
 } from "lucide-react";
+import { useBrand } from "@/lib/brand-context";
 
 interface VoiceProfile {
   summary: string;
@@ -242,6 +245,7 @@ function PositioningAngleCard({ angle, index }: { angle: PositioningAngle; index
 
 export default function SetupPage() {
   const router = useRouter();
+  const { brands, setSelectedBrandId, refreshBrands } = useBrand();
   const [step, setStep] = useState<1 | 2 | 3>(1);
   const [url, setUrl] = useState("");
   const [currentAnalysisStep, setCurrentAnalysisStep] = useState(0);
@@ -295,13 +299,20 @@ export default function SetupPage() {
           "Content-Type": "application/json",
           Authorization: `Bearer ${session?.access_token}`,
         },
-        body: JSON.stringify({ url: trimmed }),
+        body: JSON.stringify({ url: trimmed, mode: "new" }),
       });
 
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || "Setup failed");
 
       setResult(data);
+
+      // Set the newly created/updated brand as active
+      if (data.brand?.id) {
+        setSelectedBrandId(data.brand.id);
+        await refreshBrands();
+      }
+
       // Ensure all animation steps show as complete before moving on
       setCurrentAnalysisStep(analysisSteps.length);
       await new Promise((r) => setTimeout(r, 800));
@@ -323,13 +334,19 @@ export default function SetupPage() {
         {/* Header */}
         <div className="text-center space-y-3">
           <div className="mx-auto flex h-14 w-14 items-center justify-center rounded-2xl bg-primary">
-            <Zap className="h-7 w-7 text-primary-foreground" />
+            {brands.length > 0 ? (
+              <Plus className="h-7 w-7 text-primary-foreground" />
+            ) : (
+              <Zap className="h-7 w-7 text-primary-foreground" />
+            )}
           </div>
           <h1 className="text-3xl font-bold tracking-tight">
-            Welcome to VibeAds
+            {brands.length > 0 ? "Add a New Business" : "Welcome to VibeAds"}
           </h1>
           <p className="text-muted-foreground text-lg">
-            Let&apos;s set up your competitive intelligence in seconds
+            {brands.length > 0
+              ? "Enter a website URL to set up competitive intelligence for another business"
+              : "Let\u0027s set up your competitive intelligence in seconds"}
           </p>
         </div>
 
