@@ -315,34 +315,56 @@ Important instructions:
       process.env.SUPABASE_SERVICE_ROLE_KEY!
     );
 
-    // Upsert the brand record with new Vibe Marketing fields
-    const { data: brand, error: brandError } = await supabase
+    // Check if brand already exists for this user
+    const brandData = {
+      user_id: user.id,
+      name: analysis.brand.name,
+      description: analysis.brand.description,
+      voice: analysis.brand.voice,
+      audience: analysis.brand.audience,
+      primary_color: analysis.brand.primary_color,
+      accent_color: analysis.brand.accent_color,
+      url,
+      voice_profile: analysis.voice_profile as unknown as Record<string, unknown>,
+      positioning_angles: analysis.positioning_angles as unknown as Record<string, unknown>[],
+      vocabulary_guide: (analysis.voice_profile?.vocabulary || null) as unknown as Record<string, unknown>,
+      anti_positioning: analysis.anti_positioning,
+      market_sophistication_level: analysis.market_sophistication_level,
+    };
+
+    const { data: existingBrand } = await supabase
       .from("brands")
-      .upsert(
-        {
-          user_id: user.id,
-          name: analysis.brand.name,
-          description: analysis.brand.description,
-          voice: analysis.brand.voice,
-          audience: analysis.brand.audience,
-          primary_color: analysis.brand.primary_color,
-          accent_color: analysis.brand.accent_color,
-          website_url: url,
-          voice_profile: analysis.voice_profile,
-          positioning_angles: analysis.positioning_angles,
-          vocabulary_guide: analysis.voice_profile?.vocabulary || null,
-          anti_positioning: analysis.anti_positioning,
-          market_sophistication_level: analysis.market_sophistication_level,
-        },
-        {
-          onConflict: "user_id",
-        }
-      )
-      .select()
+      .select("id")
+      .eq("user_id", user.id)
+      .limit(1)
       .single();
 
-    if (brandError) {
-      console.error("Brand upsert error:", brandError);
+    let brand;
+    let brandError;
+
+    if (existingBrand) {
+      // Update existing brand
+      const result = await supabase
+        .from("brands")
+        .update(brandData)
+        .eq("id", existingBrand.id)
+        .select()
+        .single();
+      brand = result.data;
+      brandError = result.error;
+    } else {
+      // Insert new brand
+      const result = await supabase
+        .from("brands")
+        .insert(brandData)
+        .select()
+        .single();
+      brand = result.data;
+      brandError = result.error;
+    }
+
+    if (brandError || !brand) {
+      console.error("Brand save error:", brandError);
       return NextResponse.json(
         { error: "Failed to save brand data" },
         { status: 500 }
