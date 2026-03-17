@@ -18,6 +18,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { Separator } from "@/components/ui/separator";
+import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import {
   Loader2,
   ThumbsUp,
@@ -27,6 +28,12 @@ import {
   Palette,
   Filter,
   ChevronDown,
+  Target,
+  Brain,
+  Lightbulb,
+  Image,
+  Video,
+  Zap,
 } from "lucide-react";
 import {
   DropdownMenu,
@@ -51,6 +58,28 @@ const statusColors: Record<string, string> = {
   approved: "bg-emerald-600",
   rejected: "bg-red-600",
   launched: "bg-purple-600",
+};
+
+const angleTypeLabels: Record<string, { label: string; color: string }> = {
+  contrarian: { label: "Contrarian", color: "bg-rose-500/20 text-rose-300 border-rose-500/30" },
+  unique_mechanism: { label: "Unique Mechanism", color: "bg-violet-500/20 text-violet-300 border-violet-500/30" },
+  transformation: { label: "Transformation", color: "bg-emerald-500/20 text-emerald-300 border-emerald-500/30" },
+  enemy: { label: "Enemy", color: "bg-red-500/20 text-red-300 border-red-500/30" },
+  speed_ease: { label: "Speed & Ease", color: "bg-amber-500/20 text-amber-300 border-amber-500/30" },
+  specificity: { label: "Specificity", color: "bg-cyan-500/20 text-cyan-300 border-cyan-500/30" },
+  social_proof: { label: "Social Proof", color: "bg-blue-500/20 text-blue-300 border-blue-500/30" },
+  risk_reversal: { label: "Risk Reversal", color: "bg-teal-500/20 text-teal-300 border-teal-500/30" },
+};
+
+const frameworkLabels: Record<string, string> = {
+  curiosity_gap: "Curiosity Gap",
+  specific_numbers: "Specific Numbers",
+  before_after: "Before/After",
+  problem_agitate_solve: "PAS",
+  fear_of_missing_out: "FOMO",
+  social_proof_lead: "Social Proof Lead",
+  direct_benefit: "Direct Benefit",
+  story_lead: "Story Lead",
 };
 
 function CopyButton({ text, label }: { text: string; label?: string }) {
@@ -101,6 +130,184 @@ function ConfidenceBar({ score }: { score: number | null }) {
   );
 }
 
+function AngleTypeBadge({ angleType }: { angleType: string | null }) {
+  if (!angleType) return null;
+  const config = angleTypeLabels[angleType];
+  if (!config) return <Badge variant="outline" className="text-xs">{angleType}</Badge>;
+  return (
+    <Badge variant="outline" className={cn("text-xs border", config.color)}>
+      <Target className="mr-1 h-3 w-3" />
+      {config.label}
+    </Badge>
+  );
+}
+
+function FrameworkBadge({ framework }: { framework: string | null }) {
+  if (!framework) return null;
+  const label = frameworkLabels[framework] ?? framework;
+  return (
+    <Badge variant="outline" className="text-xs bg-indigo-500/20 text-indigo-300 border-indigo-500/30">
+      <Brain className="mr-1 h-3 w-3" />
+      {label}
+    </Badge>
+  );
+}
+
+function SophisticationBadge({ level }: { level: number | null }) {
+  if (!level) return null;
+  return (
+    <Badge variant="outline" className="text-xs bg-orange-500/20 text-orange-300 border-orange-500/30">
+      <Zap className="mr-1 h-3 w-3" />
+      Schwartz L{level}
+    </Badge>
+  );
+}
+
+function ImageConceptsSection({ concepts }: { concepts: any }) {
+  if (!concepts || !Array.isArray(concepts) || concepts.length === 0) return null;
+  return (
+    <div>
+      <h3 className="text-sm font-medium text-muted-foreground mb-2 flex items-center gap-1.5">
+        <Image className="h-4 w-4" />
+        Image Concepts ({concepts.length})
+      </h3>
+      <div className="space-y-3">
+        {concepts.map((concept: any, i: number) => (
+          <div key={i} className="rounded-lg border border-border p-3 space-y-2">
+            <div className="flex items-center justify-between">
+              <span className="text-xs font-medium text-muted-foreground">
+                Concept {i + 1} — {concept.style ?? "N/A"}
+              </span>
+              {concept.prompt && (
+                <CopyButton text={concept.prompt} label="Image prompt" />
+              )}
+            </div>
+            <p className="text-sm">{concept.concept}</p>
+            {concept.prompt && (
+              <p className="text-xs font-mono text-muted-foreground bg-muted rounded p-2">
+                {concept.prompt}
+              </p>
+            )}
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function VideoScriptSection({ script }: { script: string | null }) {
+  if (!script) return null;
+  return (
+    <div>
+      <h3 className="text-sm font-medium text-muted-foreground mb-2 flex items-center gap-1.5">
+        <Video className="h-4 w-4" />
+        Video Script Concept
+      </h3>
+      <div className="flex items-start gap-2 rounded-lg border border-border p-3">
+        <p className="text-sm flex-1 whitespace-pre-wrap">{script}</p>
+        <CopyButton text={script} label="Video script" />
+      </div>
+    </div>
+  );
+}
+
+function PlatformVariantsSection({ creative }: { creative: Creative }) {
+  const hasGoogleVariants = creative.google_headlines?.length || creative.google_descriptions?.length;
+  const hasLinkedInVariants = creative.linkedin_intro_text || creative.linkedin_headline;
+
+  if (!hasGoogleVariants && !hasLinkedInVariants) return null;
+
+  return (
+    <div>
+      <h3 className="text-sm font-medium text-muted-foreground mb-2">
+        Platform-Specific Variants
+      </h3>
+      <Tabs defaultValue={hasGoogleVariants ? "google" : "linkedin"}>
+        <TabsList>
+          {hasGoogleVariants && (
+            <TabsTrigger value="google">Google Ads</TabsTrigger>
+          )}
+          {hasLinkedInVariants && (
+            <TabsTrigger value="linkedin">LinkedIn</TabsTrigger>
+          )}
+        </TabsList>
+        {hasGoogleVariants && (
+          <TabsContent value="google" className="space-y-3 pt-3">
+            {creative.google_headlines && creative.google_headlines.length > 0 && (
+              <div>
+                <p className="text-xs font-medium text-muted-foreground mb-1.5">
+                  Headlines (30 char max)
+                </p>
+                <div className="space-y-1.5">
+                  {creative.google_headlines.map((h, i) => (
+                    <div
+                      key={i}
+                      className="flex items-center justify-between rounded border border-border px-2.5 py-1.5"
+                    >
+                      <div className="flex items-center gap-2">
+                        <span className="text-sm">{h}</span>
+                        <span className="text-xs text-muted-foreground">
+                          ({h.length}/30)
+                        </span>
+                      </div>
+                      <CopyButton text={h} label="Google headline" />
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+            {creative.google_descriptions && creative.google_descriptions.length > 0 && (
+              <div>
+                <p className="text-xs font-medium text-muted-foreground mb-1.5">
+                  Descriptions (90 char max)
+                </p>
+                <div className="space-y-1.5">
+                  {creative.google_descriptions.map((d, i) => (
+                    <div
+                      key={i}
+                      className="flex items-center justify-between rounded border border-border px-2.5 py-1.5"
+                    >
+                      <div className="flex items-center gap-2">
+                        <span className="text-sm">{d}</span>
+                        <span className="text-xs text-muted-foreground">
+                          ({d.length}/90)
+                        </span>
+                      </div>
+                      <CopyButton text={d} label="Google description" />
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+          </TabsContent>
+        )}
+        {hasLinkedInVariants && (
+          <TabsContent value="linkedin" className="space-y-3 pt-3">
+            {creative.linkedin_headline && (
+              <div>
+                <p className="text-xs font-medium text-muted-foreground mb-1.5">Headline</p>
+                <div className="flex items-center justify-between rounded border border-border px-2.5 py-1.5">
+                  <span className="text-sm">{creative.linkedin_headline}</span>
+                  <CopyButton text={creative.linkedin_headline} label="LinkedIn headline" />
+                </div>
+              </div>
+            )}
+            {creative.linkedin_intro_text && (
+              <div>
+                <p className="text-xs font-medium text-muted-foreground mb-1.5">Intro Text</p>
+                <div className="flex items-start justify-between rounded border border-border p-2.5">
+                  <span className="text-sm flex-1">{creative.linkedin_intro_text}</span>
+                  <CopyButton text={creative.linkedin_intro_text} label="LinkedIn intro" />
+                </div>
+              </div>
+            )}
+          </TabsContent>
+        )}
+      </Tabs>
+    </div>
+  );
+}
+
 export default function CreativesPage() {
   const supabase = createClient();
   const [creatives, setCreatives] = useState<Creative[]>([]);
@@ -109,6 +316,7 @@ export default function CreativesPage() {
   const [filterPlatform, setFilterPlatform] = useState<string>("all");
   const [filterFormat, setFilterFormat] = useState<string>("all");
   const [filterStatus, setFilterStatus] = useState<string>("all");
+  const [filterAngle, setFilterAngle] = useState<string>("all");
 
   const fetchCreatives = useCallback(async () => {
     let query = supabase
@@ -119,6 +327,7 @@ export default function CreativesPage() {
     if (filterPlatform !== "all") query = query.eq("platform", filterPlatform);
     if (filterFormat !== "all") query = query.eq("format", filterFormat);
     if (filterStatus !== "all") query = query.eq("status", filterStatus);
+    if (filterAngle !== "all") query = query.eq("positioning_angle_type", filterAngle);
 
     const { data, error } = await query.limit(50);
     if (error) {
@@ -127,7 +336,7 @@ export default function CreativesPage() {
     }
     setCreatives(data ?? []);
     setLoading(false);
-  }, [supabase, filterPlatform, filterFormat, filterStatus]);
+  }, [supabase, filterPlatform, filterFormat, filterStatus, filterAngle]);
 
   useEffect(() => {
     fetchCreatives();
@@ -164,7 +373,7 @@ export default function CreativesPage() {
         <div>
           <h1 className="text-3xl font-bold tracking-tight">Creatives</h1>
           <p className="text-muted-foreground mt-1">
-            AI-generated ad creatives based on competitive intelligence
+            AI-generated ad creatives based on competitive intelligence and direct response frameworks
           </p>
         </div>
       </div>
@@ -196,7 +405,7 @@ export default function CreativesPage() {
             <ChevronDown className="ml-2 h-3 w-3" />
           </DropdownMenuTrigger>
           <DropdownMenuContent>
-            {["all", "single_image", "carousel", "video", "story", "text"].map(
+            {["all", "single_image", "carousel", "video_script", "search_ad"].map(
               (f) => (
                 <DropdownMenuItem key={f} onClick={() => setFilterFormat(f)}>
                   {f === "all" ? "All Formats" : f.replace(/_/g, " ")}
@@ -218,6 +427,26 @@ export default function CreativesPage() {
             {["all", "draft", "approved", "rejected", "launched"].map((s) => (
               <DropdownMenuItem key={s} onClick={() => setFilterStatus(s)}>
                 {s === "all" ? "All Statuses" : s.charAt(0).toUpperCase() + s.slice(1)}
+              </DropdownMenuItem>
+            ))}
+          </DropdownMenuContent>
+        </DropdownMenu>
+
+        <DropdownMenu>
+          <DropdownMenuTrigger
+            render={<Button variant="outline" size="sm" />}
+          >
+            <Target className="mr-2 h-3 w-3" />
+            Angle: {filterAngle === "all" ? "All" : (angleTypeLabels[filterAngle]?.label ?? filterAngle)}
+            <ChevronDown className="ml-2 h-3 w-3" />
+          </DropdownMenuTrigger>
+          <DropdownMenuContent>
+            <DropdownMenuItem onClick={() => setFilterAngle("all")}>
+              All Angles
+            </DropdownMenuItem>
+            {Object.entries(angleTypeLabels).map(([key, { label }]) => (
+              <DropdownMenuItem key={key} onClick={() => setFilterAngle(key)}>
+                {label}
               </DropdownMenuItem>
             ))}
           </DropdownMenuContent>
@@ -266,6 +495,12 @@ export default function CreativesPage() {
                     {c.status}
                   </Badge>
                 </div>
+                {/* Positioning Angle & Framework Badges */}
+                <div className="flex flex-wrap gap-1.5 pt-2">
+                  <AngleTypeBadge angleType={c.positioning_angle_type} />
+                  <FrameworkBadge framework={c.copywriting_framework} />
+                  <SophisticationBadge level={c.schwartz_sophistication_level} />
+                </div>
               </CardHeader>
               <CardContent className="space-y-3">
                 {c.headline && (
@@ -291,10 +526,11 @@ export default function CreativesPage() {
 
                 <ConfidenceBar score={c.confidence_score} />
 
-                {c.competitive_angle && (
-                  <Badge variant="outline" className="text-xs">
-                    {c.competitive_angle}
-                  </Badge>
+                {c.psychological_trigger && (
+                  <p className="text-xs text-muted-foreground italic">
+                    <Lightbulb className="inline h-3 w-3 mr-1" />
+                    {c.psychological_trigger}
+                  </p>
                 )}
 
                 <div className="flex items-center justify-end gap-1 pt-1">
@@ -359,13 +595,37 @@ export default function CreativesPage() {
             </DialogHeader>
 
             <div className="space-y-6">
+              {/* Strategy Badges */}
+              <div className="flex flex-wrap gap-2">
+                <AngleTypeBadge angleType={selected.positioning_angle_type} />
+                <FrameworkBadge framework={selected.copywriting_framework} />
+                <SophisticationBadge level={selected.schwartz_sophistication_level} />
+              </div>
+
+              {selected.positioning_framework && (
+                <div className="rounded-lg bg-muted/50 border border-border p-3">
+                  <p className="text-xs font-medium text-muted-foreground mb-1">Positioning Framework</p>
+                  <p className="text-sm">{selected.positioning_framework}</p>
+                </div>
+              )}
+
+              {selected.psychological_trigger && (
+                <div className="rounded-lg bg-muted/50 border border-border p-3">
+                  <p className="text-xs font-medium text-muted-foreground mb-1">Psychological Trigger</p>
+                  <p className="text-sm">{selected.psychological_trigger}</p>
+                </div>
+              )}
+
+              <Separator />
+
+              {/* Headline with A/B Variants */}
               {selected.headline && (
                 <div>
                   <h3 className="text-sm font-medium text-muted-foreground mb-2">
-                    Headline
+                    Headline (Primary)
                   </h3>
-                  <div className="flex items-center gap-2">
-                    <p className="font-semibold">{selected.headline}</p>
+                  <div className="flex items-center gap-2 rounded-lg border border-emerald-500/30 bg-emerald-500/5 p-3">
+                    <p className="font-semibold flex-1">{selected.headline}</p>
                     <CopyButton text={selected.headline} label="Headline" />
                   </div>
                 </div>
@@ -375,15 +635,18 @@ export default function CreativesPage() {
                 selected.headline_variants.length > 0 && (
                   <div>
                     <h3 className="text-sm font-medium text-muted-foreground mb-2">
-                      Headline Variants
+                      Headline A/B Variants
                     </h3>
-                    <div className="space-y-2">
+                    <div className="grid gap-2 sm:grid-cols-2">
                       {selected.headline_variants.map((v, i) => (
                         <div
                           key={i}
-                          className="flex items-center justify-between rounded-lg border border-border p-2"
+                          className="flex items-center justify-between rounded-lg border border-border p-2.5"
                         >
-                          <p className="text-sm">{v}</p>
+                          <div>
+                            <span className="text-xs text-muted-foreground">Variant {String.fromCharCode(65 + i)}</span>
+                            <p className="text-sm font-medium">{v}</p>
+                          </div>
                           <CopyButton text={v} label="Variant" />
                         </div>
                       ))}
@@ -393,13 +656,14 @@ export default function CreativesPage() {
 
               <Separator />
 
+              {/* Primary Text with A/B Variants */}
               {selected.primary_text && (
                 <div>
                   <h3 className="text-sm font-medium text-muted-foreground mb-2">
-                    Primary Text
+                    Primary Text (Short)
                   </h3>
-                  <div className="flex items-start gap-2">
-                    <p className="text-sm leading-relaxed">{selected.primary_text}</p>
+                  <div className="flex items-start gap-2 rounded-lg border border-emerald-500/30 bg-emerald-500/5 p-3">
+                    <p className="text-sm leading-relaxed flex-1">{selected.primary_text}</p>
                     <CopyButton text={selected.primary_text} label="Primary text" />
                   </div>
                 </div>
@@ -409,7 +673,7 @@ export default function CreativesPage() {
                 selected.primary_text_variants.length > 0 && (
                   <div>
                     <h3 className="text-sm font-medium text-muted-foreground mb-2">
-                      Primary Text Variants
+                      Copy Variants
                     </h3>
                     <div className="space-y-2">
                       {selected.primary_text_variants.map((v, i) => (
@@ -418,7 +682,12 @@ export default function CreativesPage() {
                           className="rounded-lg border border-border p-3"
                         >
                           <div className="flex items-start justify-between gap-2">
-                            <p className="text-sm">{v}</p>
+                            <div className="flex-1">
+                              <span className="text-xs text-muted-foreground">
+                                {i === 0 ? "Long Version" : `Variant ${String.fromCharCode(65 + i)}`}
+                              </span>
+                              <p className="text-sm mt-1">{v}</p>
+                            </div>
                             <CopyButton text={v} label="Variant" />
                           </div>
                         </div>
@@ -451,10 +720,16 @@ export default function CreativesPage() {
 
               <Separator />
 
+              {/* Platform-Specific Variants */}
+              <PlatformVariantsSection creative={selected} />
+
+              <Separator />
+
+              {/* Image Concepts */}
               {selected.image_prompt && (
                 <div>
                   <h3 className="text-sm font-medium text-muted-foreground mb-2">
-                    Image Prompt
+                    Primary Image Prompt
                   </h3>
                   <div className="flex items-start gap-2 rounded-lg bg-muted p-3">
                     <p className="text-sm font-mono flex-1">
@@ -473,6 +748,13 @@ export default function CreativesPage() {
                   <p className="text-sm">{selected.image_concept_description}</p>
                 </div>
               )}
+
+              <ImageConceptsSection concepts={selected.image_concepts} />
+
+              <Separator />
+
+              {/* Video Script */}
+              <VideoScriptSection script={selected.video_script_concept} />
 
               <Separator />
 
