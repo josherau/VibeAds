@@ -38,9 +38,11 @@ export async function middleware(request: NextRequest) {
 
   // Public routes that don't require authentication
   const isPublicRoute =
+    pathname === "/" ||
     pathname === "/login" ||
     pathname === "/signup" ||
-    pathname.startsWith("/auth/callback");
+    pathname.startsWith("/auth/callback") ||
+    pathname.startsWith("/api/");
 
   // Redirect unauthenticated users to /login
   if (!user && !isPublicRoute) {
@@ -68,6 +70,6 @@ export const config = {
      * - favicon.ico (favicon file)
      * - public assets (svg, png, jpg, etc.)
      */
-    "/((?!_next/static|_next/image|favicon.ico|.*\\.(?:svg|png|jpg|jpeg|gif|webp)$).*)",
+    "/((?!_next|favicon.ico|.*\\.(?:svg|png|jpg|jpeg|gif|webp)$).*)",
   ],
 };

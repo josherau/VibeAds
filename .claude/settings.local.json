@@ -1,0 +1,7 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(find /Users/joshuathompson -type f \\\\\\(-name .env* -o -name package.json -o -name supabase.json \\\\\\))"
+    ]
+  }
+}
