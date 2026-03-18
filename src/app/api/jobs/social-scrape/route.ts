@@ -228,6 +228,46 @@ async function discoverSocialLinks(
   return result;
 }
 
+/**
+ * Probes common social media URLs to find accounts by company name/domain.
+ */
+async function probeForSocials(
+  companyName: string,
+  websiteUrl: string
+): Promise<Record<string, string | null>> {
+  const probed: Record<string, string | null> = {};
+  const domain = websiteUrl.replace(/^https?:\/\//, "").replace(/^www\./, "").replace(/\/.*$/, "");
+  const slug = domain.split(".")[0];
+  const cleanName = companyName.toLowerCase().replace(/[^a-z0-9]/g, "");
+  const variations = [...new Set([slug, cleanName])];
+
+  for (const handle of variations) {
+    if (!probed.instagram) {
+      try {
+        const res = await fetch(`https://www.instagram.com/${handle}/`, {
+          method: "HEAD",
+          headers: { "User-Agent": "Mozilla/5.0" },
+          redirect: "manual",
+          signal: AbortSignal.timeout(5000),
+        });
+        if (res.status === 200) probed.instagram = `@${handle}`;
+      } catch { /* */ }
+    }
+    if (!probed.twitter) {
+      try {
+        const res = await fetch(`https://x.com/${handle}`, {
+          method: "HEAD",
+          headers: { "User-Agent": "Mozilla/5.0" },
+          redirect: "manual",
+          signal: AbortSignal.timeout(5000),
+        });
+        if (res.status === 200 || res.status === 302 || res.status === 301) probed.twitter = `@${handle}`;
+      } catch { /* */ }
+    }
+  }
+  return probed;
+}
+
 // ── POST handler ──────────────────────────────────────────────────────
 
 export async function POST(request: Request) {
@@ -339,7 +379,17 @@ export async function POST(request: Request) {
 
       for (const comp of needsEnrichment.slice(0, 3)) {
         try {
+          // First try website scraping
           const socials = await discoverSocialLinks(comp.website_url!);
+
+          // If website didn't have links, probe social platforms directly
+          if (!socials.instagram && !socials.twitter) {
+            console.log(`[Social Scrape] Website had no social links for ${comp.name}, probing platforms directly`);
+            const probed = await probeForSocials(comp.name, comp.website_url!);
+            if (probed.instagram) socials.instagram = probed.instagram;
+            if (probed.twitter) socials.twitter = probed.twitter;
+          }
+
           const updates: Record<string, string | null> = {};
 
           if (socials.instagram) updates.instagram_handle = socials.instagram;
@@ -357,6 +407,8 @@ export async function POST(request: Request) {
             console.log(
               `[Social Scrape] Enriched ${comp.name}: ${JSON.stringify(updates)}`
             );
+          } else {
+            console.log(`[Social Scrape] Could not find social handles for ${comp.name}`);
           }
         } catch (err) {
           console.error(

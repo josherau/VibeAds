@@ -53,6 +53,17 @@ export async function POST(request: Request) {
         // Step 1: Fetch the website HTML to find social links
         const socialLinks = await discoverSocialLinks(competitor.website_url);
 
+        // Step 1b: If website scraping didn't find socials, use Claude web search
+        const foundFromSite = Object.values(socialLinks).filter(Boolean).length;
+        if (foundFromSite < 2) {
+          const searchResults = await searchForSocials(competitor.name, competitor.website_url);
+          for (const [platform, value] of Object.entries(searchResults)) {
+            if (value && !socialLinks[platform]) {
+              socialLinks[platform] = value;
+            }
+          }
+        }
+
         // Step 2: Try to find Meta/Facebook page ID
         let metaPageId = competitor.meta_page_id;
         if (!metaPageId && socialLinks.facebook) {
@@ -320,6 +331,102 @@ Return ONLY a JSON object with these keys. Use null if not found:
   } catch {
     return {};
   }
+}
+
+/**
+ * Searches for a company's social media accounts using Claude with web search capability.
+ * Falls back to constructing likely profile URLs and checking if they exist.
+ */
+async function searchForSocials(
+  companyName: string,
+  websiteUrl: string
+): Promise<Record<string, string | null>> {
+  const result: Record<string, string | null> = {};
+
+  // Strategy: Try common URL patterns and see if they resolve
+  const domain = websiteUrl.replace(/^https?:\/\//, "").replace(/^www\./, "").replace(/\/.*$/, "");
+  const slug = domain.split(".")[0]; // e.g., "saganpassport" from "saganpassport.com"
+  const cleanName = companyName.toLowerCase().replace(/[^a-z0-9]/g, "");
+
+  // Common handle variations to try
+  const variations = [slug, cleanName, companyName.replace(/\s+/g, "").toLowerCase()];
+  const uniqueVariations = [...new Set(variations)];
+
+  // Check Instagram
+  for (const handle of uniqueVariations) {
+    try {
+      const res = await fetch(`https://www.instagram.com/${handle}/`, {
+        method: "HEAD",
+        headers: { "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7)" },
+        redirect: "manual",
+        signal: AbortSignal.timeout(5000),
+      });
+      // Instagram returns 200 for existing profiles, 404 for non-existing
+      if (res.status === 200) {
+        result.instagram = `@${handle}`;
+        break;
+      }
+    } catch {
+      // continue
+    }
+  }
+
+  // Check Twitter/X
+  for (const handle of uniqueVariations) {
+    try {
+      const res = await fetch(`https://x.com/${handle}`, {
+        method: "HEAD",
+        headers: { "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7)" },
+        redirect: "manual",
+        signal: AbortSignal.timeout(5000),
+      });
+      if (res.status === 200 || res.status === 302 || res.status === 301) {
+        result.twitter = `@${handle}`;
+        break;
+      }
+    } catch {
+      // continue
+    }
+  }
+
+  // Check LinkedIn
+  for (const handle of uniqueVariations) {
+    try {
+      const res = await fetch(`https://www.linkedin.com/company/${handle}/`, {
+        method: "HEAD",
+        headers: { "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7)" },
+        redirect: "manual",
+        signal: AbortSignal.timeout(5000),
+      });
+      if (res.status === 200 || res.status === 302 || res.status === 301) {
+        result.linkedin = `https://www.linkedin.com/company/${handle}/`;
+        break;
+      }
+    } catch {
+      // continue
+    }
+  }
+
+  // Check Facebook
+  for (const handle of uniqueVariations) {
+    try {
+      const res = await fetch(`https://www.facebook.com/${handle}/`, {
+        method: "HEAD",
+        headers: { "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7)" },
+        redirect: "manual",
+        signal: AbortSignal.timeout(5000),
+      });
+      if (res.status === 200 || res.status === 302 || res.status === 301) {
+        result.facebook = `https://www.facebook.com/${handle}/`;
+        break;
+      }
+    } catch {
+      // continue
+    }
+  }
+
+  console.log(`[Enrich] URL probe results for ${companyName}: ${JSON.stringify(result)}`);
+  return result;
 }
 
 /**
