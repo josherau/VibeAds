@@ -16,7 +16,18 @@ import {
   ChevronDown,
   Check,
   Plus,
+  Search,
+  MessageCircle,
+  Youtube,
+  Globe,
+  PenTool,
+  Mail,
+  FileText,
+  Megaphone,
+  BarChart3,
+  DollarSign,
 } from "lucide-react";
+import type { LucideIcon } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import {
@@ -34,13 +45,60 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { useBrand } from "@/lib/brand-context";
 
-const navItems = [
-  { href: "/setup", label: "Setup", icon: Sparkles },
-  { href: "/dashboard", label: "Dashboard", icon: LayoutDashboard },
-  { href: "/competitors", label: "Competitors", icon: Users },
-  { href: "/intelligence", label: "Intelligence", icon: Brain },
-  { href: "/creatives", label: "Creatives", icon: Palette },
-  { href: "/settings", label: "Settings", icon: Settings },
+interface NavItem {
+  href: string;
+  label: string;
+  icon: LucideIcon;
+  comingSoon?: boolean;
+}
+
+interface NavGroup {
+  label: string;
+  items: NavItem[];
+}
+
+const navGroups: NavGroup[] = [
+  {
+    label: "Command Center",
+    items: [
+      { href: "/briefing", label: "AI CMO Briefing", icon: Sparkles },
+      { href: "/dashboard", label: "Dashboard", icon: LayoutDashboard },
+    ],
+  },
+  {
+    label: "Intelligence",
+    items: [
+      { href: "/competitors", label: "Competitors", icon: Users },
+      { href: "/intelligence", label: "Ad Intel", icon: Search },
+      { href: "/intelligence/social", label: "Social Intel", icon: MessageCircle },
+      { href: "/intelligence/youtube", label: "YouTube Intel", icon: Youtube },
+      { href: "/intelligence/seo", label: "SEO Intel", icon: Globe, comingSoon: true },
+    ],
+  },
+  {
+    label: "Create",
+    items: [
+      { href: "/creatives", label: "Ad Creatives", icon: Palette },
+      { href: "/content/social", label: "Social Content", icon: PenTool },
+      { href: "/content/atomizer", label: "Content Atomizer", icon: Zap },
+      { href: "/content/email", label: "Email Campaigns", icon: Mail, comingSoon: true },
+      { href: "/content/landing", label: "Landing Pages", icon: FileText, comingSoon: true },
+    ],
+  },
+  {
+    label: "Manage",
+    items: [
+      { href: "/ads", label: "Ads Manager", icon: Megaphone, comingSoon: true },
+      { href: "/ads/performance", label: "Campaign Perf", icon: BarChart3, comingSoon: true },
+      { href: "/ads/budget", label: "Budget", icon: DollarSign, comingSoon: true },
+    ],
+  },
+  {
+    label: "Settings",
+    items: [
+      { href: "/settings", label: "Settings", icon: Settings },
+    ],
+  },
 ];
 
 function BrandSelector() {
@@ -127,26 +185,50 @@ function NavContent({ onNavigate }: { onNavigate?: () => void }) {
         <BrandSelector />
       </div>
 
-      <nav className="flex-1 space-y-1 px-3">
-        {navItems.map((item) => {
-          const isActive = pathname === item.href;
-          return (
-            <Link
-              key={item.href}
-              href={item.href}
-              onClick={onNavigate}
-              className={cn(
-                "flex items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-medium transition-colors",
-                isActive
-                  ? "bg-accent text-accent-foreground"
-                  : "text-muted-foreground hover:bg-accent/50 hover:text-foreground"
-              )}
-            >
-              <item.icon className="h-4 w-4" />
-              {item.label}
-            </Link>
-          );
-        })}
+      <nav className="flex-1 overflow-y-auto px-3 pb-2">
+        {navGroups.map((group) => (
+          <div key={group.label} className="mb-3">
+            <p className="mb-1 px-3 pt-3 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground/60">
+              {group.label}
+            </p>
+            <div className="space-y-0.5">
+              {group.items.map((item) => {
+                const isActive =
+                  pathname === item.href ||
+                  (item.href !== "/" && pathname.startsWith(item.href + "/"));
+                return (
+                  <Link
+                    key={item.href}
+                    href={item.comingSoon ? "#" : item.href}
+                    onClick={(e) => {
+                      if (item.comingSoon) {
+                        e.preventDefault();
+                        return;
+                      }
+                      onNavigate?.();
+                    }}
+                    className={cn(
+                      "flex items-center gap-3 rounded-lg px-3 py-2 text-sm font-medium transition-colors",
+                      item.comingSoon
+                        ? "cursor-default text-muted-foreground/40"
+                        : isActive
+                          ? "bg-accent text-accent-foreground"
+                          : "text-muted-foreground hover:bg-accent/50 hover:text-foreground"
+                    )}
+                  >
+                    <item.icon className="h-4 w-4 shrink-0" />
+                    <span className="flex-1 truncate">{item.label}</span>
+                    {item.comingSoon && (
+                      <span className="shrink-0 rounded-full bg-muted px-1.5 py-0.5 text-[9px] font-medium uppercase leading-none text-muted-foreground/60">
+                        Soon
+                      </span>
+                    )}
+                  </Link>
+                );
+              })}
+            </div>
+          </div>
+        ))}
       </nav>
 
       <div className="border-t border-border px-4 py-4">
