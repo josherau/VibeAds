@@ -1259,7 +1259,6 @@ export async function POST(request: Request) {
           status: "completed",
           completed_at: new Date().toISOString(),
           duration_ms: durationMs,
-          step_results: stepResults,
         })
         .eq("id", pipelineRunId);
 
@@ -1282,7 +1281,6 @@ export async function POST(request: Request) {
           completed_at: new Date().toISOString(),
           duration_ms: durationMs,
           error_log: err.message,
-          step_results: stepResults,
         })
         .eq("id", pipelineRunId);
 
