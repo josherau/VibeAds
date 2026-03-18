@@ -31,6 +31,7 @@ async function askClaude(
       system: systemPrompt,
       messages: [{ role: "user", content: userPrompt }],
     }),
+    signal: AbortSignal.timeout(90000), // 90 second timeout per Claude call
   });
 
   if (!res.ok) {
@@ -444,7 +445,7 @@ async function stepResearchLandingPages(
     .eq("brand_id", brandId)
     .eq("is_active", true)
     .not("website_url", "is", null)
-    .limit(3); // Limit to 3 competitors to stay within serverless timeout
+    .limit(2); // Limit to 2 competitors to stay within serverless timeout
 
   if (compError) throw compError;
 
@@ -1167,6 +1168,10 @@ export async function POST(request: Request) {
     const pipelineRunId = pipelineRun.id;
     const stepResults: Record<string, any> = {};
 
+    // Helper: check if we're running out of time (leave 30s buffer for cleanup)
+    const DEADLINE_MS = 270_000; // 270s = 4.5 min (leave 30s buffer before Vercel's 300s kill)
+    const isNearDeadline = () => Date.now() - startTime > DEADLINE_MS;
+
     try {
       // ── Step 1: Research Meta Ads ──────────────────────────────────
       console.log(`[Pipeline] Step 1/5: Research Meta Ads`);
@@ -1183,48 +1188,63 @@ export async function POST(request: Request) {
       }
 
       // ── Step 2: Research Social ────────────────────────────────────
-      console.log(`[Pipeline] Step 2/5: Research Social`);
-      try {
-        const socialResult = await stepResearchSocial(supabase, brandId);
-        stepResults.social = socialResult;
-        await supabase
-          .from("pipeline_runs")
-          .update({ social_posts_found: socialResult.total ?? 0 })
-          .eq("id", pipelineRunId);
-      } catch (err: any) {
-        console.error("[Pipeline] Social research failed:", err);
-        stepResults.social = { error: err.message };
+      if (!isNearDeadline()) {
+        console.log(`[Pipeline] Step 2/5: Research Social`);
+        try {
+          const socialResult = await stepResearchSocial(supabase, brandId);
+          stepResults.social = socialResult;
+          await supabase
+            .from("pipeline_runs")
+            .update({ social_posts_found: socialResult.total ?? 0 })
+            .eq("id", pipelineRunId);
+        } catch (err: any) {
+          console.error("[Pipeline] Social research failed:", err);
+          stepResults.social = { error: err.message };
+        }
+      } else {
+        console.log("[Pipeline] Skipping social research - near deadline");
+        stepResults.social = { skipped: true, reason: "near deadline" };
       }
 
       // ── Step 3: Research Landing Pages ─────────────────────────────
-      console.log(`[Pipeline] Step 3/5: Research Landing Pages`);
-      try {
-        const landingResult = await stepResearchLandingPages(supabase, brandId);
-        stepResults.landing_pages = landingResult;
-        await supabase
-          .from("pipeline_runs")
-          .update({ pages_analyzed: landingResult.pages_scraped ?? 0 })
-          .eq("id", pipelineRunId);
-      } catch (err: any) {
-        console.error("[Pipeline] Landing page research failed:", err);
-        stepResults.landing_pages = { error: err.message };
+      if (!isNearDeadline()) {
+        console.log(`[Pipeline] Step 3/5: Research Landing Pages`);
+        try {
+          const landingResult = await stepResearchLandingPages(supabase, brandId);
+          stepResults.landing_pages = landingResult;
+          await supabase
+            .from("pipeline_runs")
+            .update({ pages_analyzed: landingResult.pages_scraped ?? 0 })
+            .eq("id", pipelineRunId);
+        } catch (err: any) {
+          console.error("[Pipeline] Landing page research failed:", err);
+          stepResults.landing_pages = { error: err.message };
+        }
+      } else {
+        console.log("[Pipeline] Skipping landing pages - near deadline");
+        stepResults.landing_pages = { skipped: true, reason: "near deadline" };
       }
 
       // ── Step 4: Analyze Competitors ────────────────────────────────
-      console.log(`[Pipeline] Step 4/5: Analyze Competitors`);
       let analysisId: string | null = null;
-      try {
-        const analysisResult = await stepAnalyzeCompetitors(supabase, brandId);
-        stepResults.analysis = analysisResult;
-        analysisId = analysisResult.analysis_id;
-      } catch (err: any) {
-        console.error("[Pipeline] Analysis failed:", err);
-        stepResults.analysis = { error: err.message };
+      if (!isNearDeadline()) {
+        console.log(`[Pipeline] Step 4/5: Analyze Competitors`);
+        try {
+          const analysisResult = await stepAnalyzeCompetitors(supabase, brandId);
+          stepResults.analysis = analysisResult;
+          analysisId = analysisResult.analysis_id;
+        } catch (err: any) {
+          console.error("[Pipeline] Analysis failed:", err);
+          stepResults.analysis = { error: err.message };
+        }
+      } else {
+        console.log("[Pipeline] Skipping analysis - near deadline");
+        stepResults.analysis = { skipped: true, reason: "near deadline" };
       }
 
       // ── Step 5: Generate Ads ───────────────────────────────────────
-      console.log(`[Pipeline] Step 5/5: Generate Ads`);
-      if (analysisId) {
+      if (!isNearDeadline() && analysisId) {
+        console.log(`[Pipeline] Step 5/5: Generate Ads`);
         try {
           const generateResult = await stepGenerateAds(
             supabase,
@@ -1243,12 +1263,15 @@ export async function POST(request: Request) {
           console.error("[Pipeline] Ad generation failed:", err);
           stepResults.generate = { error: err.message };
         }
-      } else {
+      } else if (!analysisId) {
         console.log("[Pipeline] Skipping ad generation - no analysis available");
         stepResults.generate = {
           skipped: true,
           reason: "No analysis_id available",
         };
+      } else {
+        console.log("[Pipeline] Skipping ad generation - near deadline");
+        stepResults.generate = { skipped: true, reason: "near deadline" };
       }
 
       // ── Step 6: Mark pipeline as completed ─────────────────────────
