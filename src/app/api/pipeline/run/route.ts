@@ -1083,6 +1083,7 @@ export async function POST(request: Request) {
 
     const body = await request.json().catch(() => ({}));
     let brandId = body.brand_id;
+    const requestedStep = body.step as string | undefined; // Optional: run a single step
 
     // If no brand_id provided, get the user's first brand
     if (!brandId) {
@@ -1145,35 +1146,44 @@ export async function POST(request: Request) {
       `[Pipeline] Starting for brand "${brand.name}" (${brandId}) with ${competitors?.length ?? 0} competitors`
     );
 
-    // Create pipeline_runs record
+    // Create or reuse pipeline_runs record
     const startTime = Date.now();
-    const { data: pipelineRun, error: runError } = await supabase
-      .from("pipeline_runs")
-      .insert({
-        brand_id: brandId,
-        status: "running",
-        started_at: new Date().toISOString(),
-      })
-      .select()
-      .single();
+    let pipelineRunId = body.run_id as string | undefined;
 
-    if (runError) {
-      console.error("[Pipeline] Failed to create pipeline run:", runError);
-      return NextResponse.json(
-        { error: "Failed to create pipeline run" },
-        { status: 500 }
-      );
+    if (!pipelineRunId) {
+      const { data: pipelineRun, error: runError } = await supabase
+        .from("pipeline_runs")
+        .insert({
+          brand_id: brandId,
+          status: "running",
+          started_at: new Date().toISOString(),
+        })
+        .select()
+        .single();
+
+      if (runError) {
+        console.error("[Pipeline] Failed to create pipeline run:", runError);
+        return NextResponse.json(
+          { error: "Failed to create pipeline run" },
+          { status: 500 }
+        );
+      }
+      pipelineRunId = pipelineRun.id;
     }
 
-    const pipelineRunId = pipelineRun.id;
     const stepResults: Record<string, any> = {};
 
     // Helper: check if we're running out of time (leave 30s buffer for cleanup)
     const DEADLINE_MS = 270_000; // 270s = 4.5 min (leave 30s buffer before Vercel's 300s kill)
     const isNearDeadline = () => Date.now() - startTime > DEADLINE_MS;
 
+    // Determine which steps to run
+    const allSteps = ["meta_ads", "social", "landing_pages", "analysis", "generate"];
+    const stepsToRun = requestedStep ? [requestedStep] : allSteps;
+
     try {
       // ── Step 1: Research Meta Ads ──────────────────────────────────
+      if (stepsToRun.includes("meta_ads")) {
       console.log(`[Pipeline] Step 1/5: Research Meta Ads`);
       try {
         const metaResult = await stepResearchMetaAds(supabase, brandId);
@@ -1187,8 +1197,10 @@ export async function POST(request: Request) {
         stepResults.meta_ads = { error: err.message };
       }
 
+      } // end meta_ads
+
       // ── Step 2: Research Social ────────────────────────────────────
-      if (!isNearDeadline()) {
+      if (stepsToRun.includes("social") && !isNearDeadline()) {
         console.log(`[Pipeline] Step 2/5: Research Social`);
         try {
           const socialResult = await stepResearchSocial(supabase, brandId);
@@ -1207,7 +1219,7 @@ export async function POST(request: Request) {
       }
 
       // ── Step 3: Research Landing Pages ─────────────────────────────
-      if (!isNearDeadline()) {
+      if (stepsToRun.includes("landing_pages") && !isNearDeadline()) {
         console.log(`[Pipeline] Step 3/5: Research Landing Pages`);
         try {
           const landingResult = await stepResearchLandingPages(supabase, brandId);
@@ -1227,7 +1239,7 @@ export async function POST(request: Request) {
 
       // ── Step 4: Analyze Competitors ────────────────────────────────
       let analysisId: string | null = null;
-      if (!isNearDeadline()) {
+      if (stepsToRun.includes("analysis") && !isNearDeadline()) {
         console.log(`[Pipeline] Step 4/5: Analyze Competitors`);
         try {
           const analysisResult = await stepAnalyzeCompetitors(supabase, brandId);
@@ -1243,7 +1255,7 @@ export async function POST(request: Request) {
       }
 
       // ── Step 5: Generate Ads ───────────────────────────────────────
-      if (!isNearDeadline() && analysisId) {
+      if (stepsToRun.includes("generate") && !isNearDeadline() && analysisId) {
         console.log(`[Pipeline] Step 5/5: Generate Ads`);
         try {
           const generateResult = await stepGenerateAds(
@@ -1274,23 +1286,27 @@ export async function POST(request: Request) {
         stepResults.generate = { skipped: true, reason: "near deadline" };
       }
 
-      // ── Step 6: Mark pipeline as completed ─────────────────────────
+      // ── Mark pipeline status ─────────────────────────────────────
       const durationMs = Date.now() - startTime;
-      await supabase
-        .from("pipeline_runs")
-        .update({
-          status: "completed",
-          completed_at: new Date().toISOString(),
-          duration_ms: durationMs,
-        })
-        .eq("id", pipelineRunId);
 
-      console.log(`[Pipeline] Completed in ${durationMs}ms`);
+      // Only mark completed if running all steps or on the last step
+      if (!requestedStep || requestedStep === "generate") {
+        await supabase
+          .from("pipeline_runs")
+          .update({
+            status: "completed",
+            completed_at: new Date().toISOString(),
+            duration_ms: durationMs,
+          })
+          .eq("id", pipelineRunId);
+      }
+
+      console.log(`[Pipeline] ${requestedStep ? `Step "${requestedStep}"` : "All steps"} completed in ${durationMs}ms`);
 
       return NextResponse.json({
         success: true,
         run_id: pipelineRunId,
-        message: "Pipeline completed",
+        message: requestedStep ? `Step "${requestedStep}" completed` : "Pipeline completed",
         duration_ms: durationMs,
         steps: stepResults,
       });

@@ -43,6 +43,7 @@ export default function DashboardPage() {
   const [pipelineRuns, setPipelineRuns] = useState<PipelineRun[]>([]);
   const [lastRunAt, setLastRunAt] = useState<string | null>(null);
   const [isRunning, setIsRunning] = useState(false);
+  const [pipelineStatus, setPipelineStatus] = useState("");
   const [loading, setLoading] = useState(true);
 
   const fetchData = useCallback(async () => {
@@ -120,32 +121,55 @@ export default function DashboardPage() {
       return;
     }
     setIsRunning(true);
-    try {
-      const controller = new AbortController();
-      const timeout = setTimeout(() => controller.abort(), 290000); // 290s timeout (just under Vercel's 300s max)
 
-      const res = await fetch("/api/pipeline/run", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ brand_id: selectedBrandId }),
-        signal: controller.signal,
-      });
-      clearTimeout(timeout);
+    const steps = [
+      { key: "meta_ads", label: "Researching competitor ads..." },
+      { key: "social", label: "Scraping social media..." },
+      { key: "landing_pages", label: "Analyzing landing pages..." },
+      { key: "analysis", label: "Running competitive analysis..." },
+      { key: "generate", label: "Generating ad creatives..." },
+    ];
 
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error || "Failed to run pipeline");
-      toast.success("Pipeline completed successfully!");
-      fetchData();
-    } catch (err) {
-      if (err instanceof DOMException && err.name === "AbortError") {
-        toast.error("Pipeline timed out. Check the pipeline runs table for partial results.");
-      } else {
-        toast.error(err instanceof Error ? err.message : "Failed to run pipeline");
+    let runId: string | undefined;
+    let failedSteps = 0;
+
+    for (const step of steps) {
+      setPipelineStatus(step.label);
+      try {
+        const res = await fetch("/api/pipeline/run", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            brand_id: selectedBrandId,
+            step: step.key,
+            run_id: runId,
+          }),
+          signal: AbortSignal.timeout(280000),
+        });
+        const data = await res.json();
+        if (!res.ok) {
+          console.error(`Step ${step.key} failed:`, data.error);
+          failedSteps++;
+        } else {
+          if (!runId) runId = data.run_id;
+        }
+      } catch (err) {
+        console.error(`Step ${step.key} error:`, err);
+        failedSteps++;
       }
-      fetchData(); // Refresh to show any partial results
-    } finally {
-      setIsRunning(false);
     }
+
+    setPipelineStatus("");
+    setIsRunning(false);
+
+    if (failedSteps === 0) {
+      toast.success("Pipeline completed successfully!");
+    } else if (failedSteps < steps.length) {
+      toast.warning(`Pipeline completed with ${failedSteps} step(s) having issues. Check results.`);
+    } else {
+      toast.error("Pipeline failed. Check logs for details.");
+    }
+    fetchData();
   }
 
   function getStatusBadge(status: string, startedAt?: string) {
@@ -244,14 +268,19 @@ export default function DashboardPage() {
               : "Your competitive intelligence overview"}
           </p>
         </div>
-        <Button onClick={runPipeline} disabled={isRunning || !selectedBrandId}>
-          {isRunning ? (
-            <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-          ) : (
-            <Play className="mr-2 h-4 w-4" />
+        <div className="flex flex-col items-end gap-1">
+          <Button onClick={runPipeline} disabled={isRunning || !selectedBrandId}>
+            {isRunning ? (
+              <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+            ) : (
+              <Play className="mr-2 h-4 w-4" />
+            )}
+            {isRunning ? "Running..." : "Run Pipeline Now"}
+          </Button>
+          {pipelineStatus && (
+            <p className="text-xs text-muted-foreground animate-pulse">{pipelineStatus}</p>
           )}
-          Run Pipeline Now
-        </Button>
+        </div>
       </div>
 
       {brands.length === 0 && (
