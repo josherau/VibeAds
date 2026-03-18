@@ -103,6 +103,131 @@ async function waitForApifyRun(
   throw new Error(`Apify run ${runId} timed out after ${maxWaitMs}ms`);
 }
 
+// ── Social discovery ──────────────────────────────────────────────────
+
+async function discoverSocialLinks(
+  websiteUrl: string
+): Promise<Record<string, string | null>> {
+  const result: Record<string, string | null> = {
+    instagram: null,
+    twitter: null,
+    linkedin: null,
+    facebook: null,
+    youtube: null,
+    tiktok: null,
+  };
+
+  let html = "";
+
+  // Try Firecrawl first
+  const firecrawlKey = process.env.FIRECRAWL_API_KEY;
+  if (firecrawlKey) {
+    try {
+      const res = await fetch("https://api.firecrawl.dev/v1/scrape", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${firecrawlKey}`,
+        },
+        body: JSON.stringify({
+          url: websiteUrl,
+          formats: ["html"],
+          onlyMainContent: false,
+          timeout: 20000,
+        }),
+      });
+      if (res.ok) {
+        const data = await res.json();
+        html = data.data?.html || "";
+      }
+    } catch {
+      // fall through
+    }
+  }
+
+  // Fallback: direct fetch
+  if (!html) {
+    try {
+      const res = await fetch(websiteUrl, {
+        headers: {
+          "User-Agent":
+            "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36",
+        },
+        signal: AbortSignal.timeout(10000),
+      });
+      html = await res.text();
+    } catch {
+      return result;
+    }
+  }
+
+  // Regex patterns
+  const patterns: Record<string, RegExp> = {
+    instagram:
+      /https?:\/\/(?:www\.)?instagram\.com\/([a-zA-Z0-9._]{2,30})\/?/gi,
+    twitter:
+      /https?:\/\/(?:www\.)?(?:twitter\.com|x\.com)\/([a-zA-Z0-9_]{1,15})\/?/gi,
+    linkedin:
+      /https?:\/\/(?:www\.)?linkedin\.com\/(?:company|in)\/([a-zA-Z0-9_-]+)\/?/gi,
+    facebook:
+      /https?:\/\/(?:www\.)?facebook\.com\/([a-zA-Z0-9._-]+)\/?/gi,
+    youtube:
+      /https?:\/\/(?:www\.)?youtube\.com\/(?:@|channel\/|c\/|user\/)([a-zA-Z0-9_-]+)\/?/gi,
+    tiktok:
+      /https?:\/\/(?:www\.)?tiktok\.com\/@([a-zA-Z0-9._-]+)\/?/gi,
+  };
+
+  const excluded = new Set([
+    "share", "sharer", "intent", "hashtag", "home", "login", "signup",
+    "search", "explore", "settings", "help", "about", "privacy", "terms",
+    "policies", "ads", "business", "developers", "p", "watch", "embed",
+    "channel", "playlist", "feed", "stories", "reels", "direct",
+    "accounts", "oauth", "dialog", "plugins", "tr", "flx",
+  ]);
+
+  for (const [platform, regex] of Object.entries(patterns)) {
+    const matches = [...html.matchAll(regex)];
+    for (const match of matches) {
+      const handle = match[1];
+      if (handle && !excluded.has(handle.toLowerCase())) {
+        if (platform === "instagram" || platform === "twitter" || platform === "tiktok") {
+          result[platform] = handle.startsWith("@") ? handle : `@${handle}`;
+        } else {
+          result[platform] = match[0];
+        }
+        break;
+      }
+    }
+  }
+
+  // If regex didn't find enough, try Claude
+  const foundCount = Object.values(result).filter(Boolean).length;
+  if (foundCount < 2 && html.length > 500) {
+    try {
+      const anthropicKey = process.env.ANTHROPIC_API_KEY;
+      if (anthropicKey) {
+        const truncated = html.slice(0, 15000);
+        const claudeRes = await askClaude(
+          `Extract social media profile URLs/handles from website HTML. Look everywhere: href, data attributes, scripts, JSON-LD, meta tags, og:tags, etc. Return ONLY JSON: {"instagram":"@handle or null","twitter":"@handle or null","linkedin":"URL or null","facebook":"URL or null","youtube":"URL or null","tiktok":"@handle or null"}`,
+          `Extract social profiles from ${websiteUrl}:\n\n${truncated}`,
+          500
+        );
+        const jsonMatch = claudeRes.match(/\{[\s\S]*\}/);
+        if (jsonMatch) {
+          const parsed = JSON.parse(jsonMatch[0]);
+          for (const [p, v] of Object.entries(parsed)) {
+            if (v && !result[p]) result[p] = v as string;
+          }
+        }
+      }
+    } catch {
+      // ignore
+    }
+  }
+
+  return result;
+}
+
 // ── POST handler ──────────────────────────────────────────────────────
 
 export async function POST(request: Request) {
@@ -170,22 +295,19 @@ export async function POST(request: Request) {
       );
     }
 
-    // 5. Fetch competitors with social handles (limit 3)
+    // 5. Fetch competitors (limit 5)
     const { data: competitors, error: compError } = await supabase
       .from("competitors")
       .select("*")
       .eq("brand_id", brandId)
-      .eq("is_active", true);
+      .eq("is_active", true)
+      .limit(5);
 
     if (compError) {
       throw compError;
     }
 
-    const socialCompetitors = (competitors ?? [])
-      .filter((c: any) => c.instagram_handle || c.twitter_handle)
-      .slice(0, 3); // Limit to 3 to stay within timeout
-
-    if (socialCompetitors.length === 0) {
+    if (!competitors || competitors.length === 0) {
       await supabase
         .from("pipeline_runs")
         .update({
@@ -200,8 +322,75 @@ export async function POST(request: Request) {
       return NextResponse.json({
         success: true,
         run_id: runId,
-        message: "No competitors with social handles found",
+        message: "No competitors found for this brand",
         posts_found: 0,
+      });
+    }
+
+    // 5b. Auto-enrich competitors that are missing social handles
+    const needsEnrichment = competitors.filter(
+      (c: any) => c.website_url && !c.instagram_handle && !c.twitter_handle
+    );
+
+    if (needsEnrichment.length > 0) {
+      console.log(
+        `[Social Scrape] Auto-enriching ${needsEnrichment.length} competitors to discover social handles`
+      );
+
+      for (const comp of needsEnrichment.slice(0, 3)) {
+        try {
+          const socials = await discoverSocialLinks(comp.website_url!);
+          const updates: Record<string, string | null> = {};
+
+          if (socials.instagram) updates.instagram_handle = socials.instagram;
+          if (socials.twitter) updates.twitter_handle = socials.twitter;
+          if (socials.linkedin) updates.linkedin_url = socials.linkedin;
+
+          if (Object.keys(updates).length > 0) {
+            await supabase
+              .from("competitors")
+              .update(updates)
+              .eq("id", comp.id);
+
+            // Update our local copy too
+            Object.assign(comp, updates);
+            console.log(
+              `[Social Scrape] Enriched ${comp.name}: ${JSON.stringify(updates)}`
+            );
+          }
+        } catch (err) {
+          console.error(
+            `[Social Scrape] Enrich failed for ${comp.name}:`,
+            err
+          );
+        }
+      }
+    }
+
+    // 5c. Filter to competitors that now have social handles
+    const socialCompetitors = competitors
+      .filter((c: any) => c.instagram_handle || c.twitter_handle)
+      .slice(0, 3);
+
+    if (socialCompetitors.length === 0) {
+      await supabase
+        .from("pipeline_runs")
+        .update({
+          status: "completed",
+          steps_completed: ["enrich", "social_scrape"],
+          social_posts_found: 0,
+          completed_at: new Date().toISOString(),
+          duration_ms: Date.now() - startTime,
+        })
+        .eq("id", runId);
+
+      return NextResponse.json({
+        success: true,
+        run_id: runId,
+        message:
+          "Could not find Instagram or Twitter handles for any competitors. Try adding them manually on the Competitors page.",
+        posts_found: 0,
+        enriched: needsEnrichment.length,
       });
     }
 

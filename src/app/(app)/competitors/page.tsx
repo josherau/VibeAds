@@ -536,7 +536,7 @@ export default function CompetitorsPage() {
       ) : (
         <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
           {competitors.map((c) => (
-            <Card key={c.id} className="relative cursor-pointer hover:border-primary/50 transition-colors" onClick={() => router.push(`/competitors/${c.id}`)}>
+            <Card key={c.id} className="relative cursor-pointer hover:border-primary/50 transition-colors" onClick={(e) => { const el = e.target as HTMLElement; if (el.closest('button, a, [role="menuitem"]')) return; router.push(`/competitors/${c.id}`); }}>
               <CardHeader className="flex flex-row items-start justify-between pb-3">
                 <div className="space-y-1 pr-8">
                   <CardTitle className="text-base">{c.name}</CardTitle>
