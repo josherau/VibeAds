@@ -500,7 +500,25 @@ export async function POST(request: Request) {
 
           const results = await waitForApifyRun(apifyRunId, apifyToken);
 
-          for (const post of Array.isArray(results) ? results : []) {
+          console.log(`[Social Scrape] Instagram raw results count: ${results?.length}, first item keys: ${JSON.stringify(Object.keys(results?.[0] || {})).slice(0, 200)}`);
+
+          // The profile scraper returns profile objects with posts nested in latestPosts/posts
+          // Flatten to get actual posts
+          const igPosts: any[] = [];
+          for (const item of Array.isArray(results) ? results : []) {
+            if (item.latestPosts && Array.isArray(item.latestPosts)) {
+              igPosts.push(...item.latestPosts);
+            } else if (item.posts && Array.isArray(item.posts)) {
+              igPosts.push(...item.posts);
+            } else if (item.caption || item.shortCode) {
+              // Item itself is a post (from post scraper)
+              igPosts.push(item);
+            }
+          }
+
+          console.log(`[Social Scrape] Instagram extracted ${igPosts.length} posts for ${competitor.name}`);
+
+          for (const post of igPosts) {
             const extId = post.id ?? post.shortCode ?? null;
 
             // Skip if we already have this post
@@ -521,16 +539,16 @@ export async function POST(request: Request) {
               source: "instagram",
               external_id: extId,
               content_type: "social_post",
-              title: post.caption?.slice(0, 200) ?? null,
-              body_text: post.caption ?? null,
-              media_urls: post.displayUrl ? [post.displayUrl] : null,
+              title: (post.caption ?? post.text ?? "")?.slice(0, 200) || null,
+              body_text: post.caption ?? post.text ?? null,
+              media_urls: post.displayUrl ? [post.displayUrl] : post.imageUrl ? [post.imageUrl] : null,
               engagement_metrics: {
-                likes: post.likesCount ?? 0,
-                comments: post.commentsCount ?? 0,
-                shares: 0,
+                likes: post.likesCount ?? post.likes ?? 0,
+                comments: post.commentsCount ?? post.comments ?? 0,
+                shares: post.sharesCount ?? 0,
                 url: post.url ?? (post.shortCode ? `https://instagram.com/p/${post.shortCode}` : null),
               },
-              published_at: post.timestamp ?? null,
+              published_at: post.timestamp ?? post.takenAt ?? null,
               raw_data: post,
             };
 
@@ -571,15 +589,29 @@ export async function POST(request: Request) {
 
           const results = await waitForApifyRun(apifyRunId, apifyToken);
 
-          for (const tweet of Array.isArray(results) ? results : []) {
-            const extId = tweet.id ?? null;
+          console.log(`[Social Scrape] Twitter raw results count: ${results?.length}, first item keys: ${JSON.stringify(Object.keys(results?.[0] || {})).slice(0, 200)}`);
+
+          // Twitter scraper may return tweets directly or nested under user profiles
+          const tweets: any[] = [];
+          for (const item of Array.isArray(results) ? results : []) {
+            if (item.tweets && Array.isArray(item.tweets)) {
+              tweets.push(...item.tweets);
+            } else if (item.text || item.full_text || item.tweet) {
+              tweets.push(item);
+            }
+          }
+
+          console.log(`[Social Scrape] Twitter extracted ${tweets.length} tweets for ${competitor.name}`);
+
+          for (const tweet of tweets) {
+            const extId = tweet.id ?? tweet.id_str ?? null;
 
             // Skip if we already have this tweet
             if (extId) {
               const { data: existing } = await supabase
                 .from("competitor_content")
                 .select("id")
-                .eq("external_id", extId)
+                .eq("external_id", String(extId))
                 .limit(1);
               if (existing && existing.length > 0) {
                 twitterCount++;
@@ -587,20 +619,21 @@ export async function POST(request: Request) {
               }
             }
 
+            const tweetText = tweet.text ?? tweet.full_text ?? tweet.tweet?.text ?? "";
             const record = {
               competitor_id: competitor.id,
               source: "twitter",
-              external_id: extId,
+              external_id: extId ? String(extId) : null,
               content_type: "social_post",
-              title: tweet.text?.slice(0, 200) ?? null,
-              body_text: tweet.text ?? null,
+              title: tweetText.slice(0, 200) || null,
+              body_text: tweetText || null,
               engagement_metrics: {
-                likes: tweet.likeCount ?? tweet.favoriteCount ?? 0,
-                comments: tweet.replyCount ?? 0,
-                shares: tweet.retweetCount ?? 0,
-                url: tweet.url ?? null,
+                likes: tweet.likeCount ?? tweet.favoriteCount ?? tweet.favorite_count ?? 0,
+                comments: tweet.replyCount ?? tweet.reply_count ?? 0,
+                shares: tweet.retweetCount ?? tweet.retweet_count ?? 0,
+                url: tweet.url ?? (tweet.id_str ? `https://x.com/i/status/${tweet.id_str}` : null),
               },
-              published_at: tweet.createdAt ?? null,
+              published_at: tweet.createdAt ?? tweet.created_at ?? null,
               raw_data: tweet,
             };
 

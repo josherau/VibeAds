@@ -195,15 +195,20 @@ export default function SocialIntelligencePage() {
         .limit(200);
 
       const enrichedPosts: SocialPost[] = (contentData ?? []).map(
-        (post: any) => ({
-          ...post,
-          competitor_name: competitorMap.get(post.competitor_id) ?? "Unknown",
-          platform: post.platform ?? post.source,
-          engagement_likes: post.engagement_likes ?? 0,
-          engagement_comments: post.engagement_comments ?? 0,
-          engagement_shares: post.engagement_shares ?? 0,
-          posted_at: post.posted_at ?? post.published_at,
-        })
+        (post: any) => {
+          // Engagement is stored in engagement_metrics jsonb column
+          const metrics = post.engagement_metrics ?? {};
+          return {
+            ...post,
+            competitor_name: competitorMap.get(post.competitor_id) ?? "Unknown",
+            platform: post.platform ?? post.source,
+            engagement_likes: metrics.likes ?? post.engagement_likes ?? 0,
+            engagement_comments: metrics.comments ?? post.engagement_comments ?? 0,
+            engagement_shares: metrics.shares ?? post.engagement_shares ?? 0,
+            url: metrics.url ?? post.url ?? null,
+            posted_at: post.posted_at ?? post.published_at,
+          };
+        }
       );
 
       setPosts(enrichedPosts);
