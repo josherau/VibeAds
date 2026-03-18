@@ -379,7 +379,7 @@ export default function ContentAtomizerPage() {
   function viewHistoryItem(item: ContentAtom) {
     const atoms = (Array.isArray(item.atoms) ? item.atoms : []) as unknown as Atom[];
     setCurrentAtoms(atoms);
-    setCurrentSummary(item.source_summary);
+    setCurrentSummary((item as any).source_summary ?? item.source_title ?? "");
     setAtomCount(item.atom_count);
     setViewingHistory(item.id);
   }

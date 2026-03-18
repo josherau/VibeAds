@@ -195,11 +195,11 @@ function PostCard({
           </div>
         )}
 
-        {post.media_prompt && (
+        {(post.media_prompts as any) && (
           <div className="flex items-start gap-1.5">
             <Image className="h-3 w-3 text-muted-foreground mt-0.5 shrink-0" />
             <p className="text-xs text-muted-foreground italic line-clamp-2">
-              {post.media_prompt}
+              {(post.media_prompts as any)}
             </p>
           </div>
         )}
