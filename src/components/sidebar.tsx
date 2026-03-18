@@ -16,6 +16,7 @@ import {
   ChevronDown,
   Check,
   Plus,
+  ClipboardList,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
@@ -38,6 +39,7 @@ const navItems = [
   { href: "/setup", label: "Setup", icon: Sparkles },
   { href: "/dashboard", label: "Dashboard", icon: LayoutDashboard },
   { href: "/competitors", label: "Competitors", icon: Users },
+  { href: "/briefing", label: "CMO Briefing", icon: ClipboardList },
   { href: "/intelligence", label: "Intelligence", icon: Brain },
   { href: "/creatives", label: "Creatives", icon: Palette },
   { href: "/settings", label: "Settings", icon: Settings },

@@ -420,6 +420,48 @@ export interface Database {
         };
         Relationships: [];
       };
+      briefings: {
+        Row: {
+          id: string;
+          brand_id: string;
+          executive_summary: string | null;
+          health_score: number | null;
+          key_metrics: Json | null;
+          wins: Json | null;
+          concerns: Json | null;
+          action_items: Json | null;
+          competitor_moves: Json | null;
+          content_recommendations: Json | null;
+          created_at: string;
+        };
+        Insert: {
+          id?: string;
+          brand_id: string;
+          executive_summary?: string | null;
+          health_score?: number | null;
+          key_metrics?: Json | null;
+          wins?: Json | null;
+          concerns?: Json | null;
+          action_items?: Json | null;
+          competitor_moves?: Json | null;
+          content_recommendations?: Json | null;
+          created_at?: string;
+        };
+        Update: {
+          id?: string;
+          brand_id?: string;
+          executive_summary?: string | null;
+          health_score?: number | null;
+          key_metrics?: Json | null;
+          wins?: Json | null;
+          concerns?: Json | null;
+          action_items?: Json | null;
+          competitor_moves?: Json | null;
+          content_recommendations?: Json | null;
+          created_at?: string;
+        };
+        Relationships: [];
+      };
       pipeline_runs: {
         Row: {
           id: string;
