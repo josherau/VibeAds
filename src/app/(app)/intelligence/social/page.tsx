@@ -248,23 +248,54 @@ export default function SocialIntelligencePage() {
     }
     setScraping(true);
     try {
-      const controller = new AbortController();
-      const timeout = setTimeout(() => controller.abort(), 115000);
+      // First, auto-discover social handles for competitors that don't have them
+      const compsWithoutSocials = competitors.filter(
+        (c) => !c.instagram_handle && !c.twitter_handle && c.website_url
+      );
+      if (compsWithoutSocials.length > 0) {
+        toast.info(`Discovering social accounts for ${compsWithoutSocials.length} competitor(s)...`);
+        try {
+          await fetch("/api/competitors/enrich", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              competitor_ids: compsWithoutSocials.map((c) => c.id),
+            }),
+          });
+          // Re-fetch competitors to get updated handles
+          const { data: updatedComps } = await supabase
+            .from("competitors")
+            .select("*")
+            .eq("brand_id", selectedBrandId)
+            .eq("is_active", true);
+          if (updatedComps) {
+            setCompetitors(updatedComps as Competitor[]);
+          }
+        } catch (e) {
+          console.error("Enrich failed:", e);
+        }
+      }
+
+      toast.info("Scraping social media posts...");
 
       const res = await fetch("/api/jobs/social-scrape", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ brand_id: selectedBrandId }),
-        signal: controller.signal,
+        signal: AbortSignal.timeout(115000),
       });
-      clearTimeout(timeout);
 
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || "Social scrape failed");
 
-      toast.success(
-        `Social scrape complete! Found ${data.total_posts ?? 0} posts.`
-      );
+      const totalPosts = data.total_posts ?? data.posts_found ?? 0;
+      if (totalPosts > 0) {
+        toast.success(`Social scrape complete! Found ${totalPosts} posts.`);
+      } else if (data.message) {
+        toast.warning(data.message);
+      } else {
+        toast.warning("Social scrape complete but no posts were found. Make sure competitors have Instagram or Twitter handles.");
+      }
       fetchData();
     } catch (err) {
       if (err instanceof DOMException && err.name === "AbortError") {
