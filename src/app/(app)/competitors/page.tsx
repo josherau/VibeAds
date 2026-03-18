@@ -553,7 +553,7 @@ export default function CompetitorsPage() {
                     </a>
                   )}
                 </div>
-                <div className="flex items-center gap-2" onClick={(e) => e.stopPropagation()}>
+                <div className="flex items-center gap-2" onClickCapture={(e) => e.stopPropagation()} onPointerDownCapture={(e) => e.stopPropagation()}>
                   <Badge variant={c.is_active ? "default" : "secondary"}>
                     {c.is_active ? "Active" : "Inactive"}
                   </Badge>

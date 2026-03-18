@@ -232,34 +232,46 @@ export async function POST(request: Request) {
           const results = await waitForApifyRun(apifyRunId, apifyToken);
 
           for (const post of Array.isArray(results) ? results : []) {
+            const extId = post.id ?? post.shortCode ?? null;
+
+            // Skip if we already have this post
+            if (extId) {
+              const { data: existing } = await supabase
+                .from("competitor_content")
+                .select("id")
+                .eq("external_id", extId)
+                .limit(1);
+              if (existing && existing.length > 0) {
+                instagramCount++;
+                continue;
+              }
+            }
+
             const record = {
               competitor_id: competitor.id,
-              brand_id: competitor.brand_id,
+              source: "instagram",
+              external_id: extId,
               content_type: "social_post",
-              platform: "instagram",
-              source: "apify",
               title: post.caption?.slice(0, 200) ?? null,
               body_text: post.caption ?? null,
-              url:
-                post.url ??
-                (post.shortCode
-                  ? `https://instagram.com/p/${post.shortCode}`
-                  : null),
-              engagement_likes: post.likesCount ?? null,
-              engagement_comments: post.commentsCount ?? null,
-              posted_at: post.timestamp ?? null,
-              external_id: post.id ?? post.shortCode ?? null,
+              media_urls: post.displayUrl ? [post.displayUrl] : null,
+              engagement_metrics: {
+                likes: post.likesCount ?? 0,
+                comments: post.commentsCount ?? 0,
+                shares: 0,
+                url: post.url ?? (post.shortCode ? `https://instagram.com/p/${post.shortCode}` : null),
+              },
+              published_at: post.timestamp ?? null,
               raw_data: post,
-              fetched_at: new Date().toISOString(),
             };
 
             const { error } = await supabase
               .from("competitor_content")
-              .upsert(record, { onConflict: "external_id" });
+              .insert(record);
 
             if (error) {
               console.error(
-                `[Social Scrape] Instagram upsert error: ${error.message}`
+                `[Social Scrape] Instagram insert error: ${error.message}`
               );
             } else {
               instagramCount++;
@@ -289,32 +301,45 @@ export async function POST(request: Request) {
           const results = await waitForApifyRun(apifyRunId, apifyToken);
 
           for (const tweet of Array.isArray(results) ? results : []) {
+            const extId = tweet.id ?? null;
+
+            // Skip if we already have this tweet
+            if (extId) {
+              const { data: existing } = await supabase
+                .from("competitor_content")
+                .select("id")
+                .eq("external_id", extId)
+                .limit(1);
+              if (existing && existing.length > 0) {
+                twitterCount++;
+                continue;
+              }
+            }
+
             const record = {
               competitor_id: competitor.id,
-              brand_id: competitor.brand_id,
+              source: "twitter",
+              external_id: extId,
               content_type: "social_post",
-              platform: "twitter",
-              source: "apify",
               title: tweet.text?.slice(0, 200) ?? null,
               body_text: tweet.text ?? null,
-              url: tweet.url ?? null,
-              engagement_likes:
-                tweet.likeCount ?? tweet.favoriteCount ?? null,
-              engagement_comments: tweet.replyCount ?? null,
-              engagement_shares: tweet.retweetCount ?? null,
-              posted_at: tweet.createdAt ?? null,
-              external_id: tweet.id ?? null,
+              engagement_metrics: {
+                likes: tweet.likeCount ?? tweet.favoriteCount ?? 0,
+                comments: tweet.replyCount ?? 0,
+                shares: tweet.retweetCount ?? 0,
+                url: tweet.url ?? null,
+              },
+              published_at: tweet.createdAt ?? null,
               raw_data: tweet,
-              fetched_at: new Date().toISOString(),
             };
 
             const { error } = await supabase
               .from("competitor_content")
-              .upsert(record, { onConflict: "external_id" });
+              .insert(record);
 
             if (error) {
               console.error(
-                `[Social Scrape] Twitter upsert error: ${error.message}`
+                `[Social Scrape] Twitter insert error: ${error.message}`
               );
             } else {
               twitterCount++;
@@ -345,15 +370,18 @@ export async function POST(request: Request) {
           .limit(100);
 
         if (allPosts && allPosts.length > 0) {
-          const postSummaries = allPosts.map((p: any) => ({
-            competitor: p.competitors?.name,
-            platform: p.platform ?? p.source,
-            text: (p.body_text ?? "").slice(0, 300),
-            likes: p.engagement_likes ?? 0,
-            comments: p.engagement_comments ?? 0,
-            shares: p.engagement_shares ?? 0,
-            date: p.posted_at,
-          }));
+          const postSummaries = allPosts.map((p: any) => {
+            const metrics = p.engagement_metrics ?? {};
+            return {
+              competitor: p.competitors?.name,
+              platform: p.source,
+              text: (p.body_text ?? "").slice(0, 300),
+              likes: metrics.likes ?? 0,
+              comments: metrics.comments ?? 0,
+              shares: metrics.shares ?? 0,
+              date: p.published_at,
+            };
+          });
 
           const analysisResponse = await askClaude(
             `You are a social media intelligence analyst. Analyze competitor social media posts and extract actionable insights. Return ONLY valid JSON.`,
