@@ -16,6 +16,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { Separator } from "@/components/ui/separator";
 import { Loader2, Save, Eye, EyeOff, Key } from "lucide-react";
 import { toast } from "sonner";
+import { useBrand } from "@/lib/brand-context";
 import type { Database } from "@/lib/supabase/types";
 
 type Brand = Database["public"]["Tables"]["brands"]["Row"];
@@ -63,6 +64,7 @@ function MaskedInput({
 
 export default function SettingsPage() {
   const supabase = createClient();
+  const { selectedBrandId, selectedBrand, refreshBrands, loading: brandLoading } = useBrand();
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
 
@@ -88,24 +90,39 @@ export default function SettingsPage() {
   const [notificationEmail, setNotificationEmail] = useState("");
 
   const fetchSettings = useCallback(async () => {
+    if (!selectedBrandId) {
+      setBrand(null);
+      setBrandForm({
+        name: "",
+        url: "",
+        description: "",
+        voice: "",
+        audience: "",
+        primary_color: "#6366f1",
+        accent_color: "#8b5cf6",
+      });
+      setLoading(false);
+      return;
+    }
+
     try {
       const { data } = await supabase
         .from("brands")
         .select("*")
-        .limit(1)
+        .eq("id", selectedBrandId)
         .single();
-      const brands = data as Brand | null;
+      const brandData = data as Brand | null;
 
-      if (brands) {
-        setBrand(brands);
+      if (brandData) {
+        setBrand(brandData);
         setBrandForm({
-          name: brands.name,
-          url: brands.url ?? "",
-          description: brands.description ?? "",
-          voice: brands.voice ?? "",
-          audience: brands.audience ?? "",
-          primary_color: brands.primary_color ?? "#6366f1",
-          accent_color: brands.accent_color ?? "#8b5cf6",
+          name: brandData.name,
+          url: brandData.url ?? "",
+          description: brandData.description ?? "",
+          voice: brandData.voice ?? "",
+          audience: brandData.audience ?? "",
+          primary_color: brandData.primary_color ?? "#6366f1",
+          accent_color: brandData.accent_color ?? "#8b5cf6",
         });
       }
     } catch {
@@ -113,11 +130,14 @@ export default function SettingsPage() {
     } finally {
       setLoading(false);
     }
-  }, [supabase]);
+  }, [supabase, selectedBrandId]);
 
   useEffect(() => {
-    fetchSettings();
-  }, [fetchSettings]);
+    if (!brandLoading) {
+      setLoading(true);
+      fetchSettings();
+    }
+  }, [fetchSettings, brandLoading, selectedBrandId]);
 
   async function saveBrandSettings(e: React.FormEvent) {
     e.preventDefault();
@@ -156,6 +176,7 @@ export default function SettingsPage() {
         if (error) throw error;
       }
       toast.success("Brand settings saved");
+      await refreshBrands();
       fetchSettings();
     } catch (err) {
       toast.error(
@@ -166,7 +187,7 @@ export default function SettingsPage() {
     }
   }
 
-  if (loading) {
+  if (loading || brandLoading) {
     return (
       <div className="flex h-96 items-center justify-center">
         <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
@@ -179,7 +200,9 @@ export default function SettingsPage() {
       <div>
         <h1 className="text-3xl font-bold tracking-tight">Settings</h1>
         <p className="text-muted-foreground mt-1">
-          Configure your brand, API keys, and pipeline preferences
+          {selectedBrand
+            ? `Configure settings for ${selectedBrand.name}`
+            : "Configure your brand, API keys, and pipeline preferences"}
         </p>
       </div>
 
