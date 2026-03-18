@@ -229,43 +229,61 @@ async function discoverSocialLinks(
 }
 
 /**
- * Probes common social media URLs to find accounts by company name/domain.
+ * Searches Google for a company's social media accounts using Apify.
  */
 async function probeForSocials(
   companyName: string,
-  websiteUrl: string
+  _websiteUrl: string
 ): Promise<Record<string, string | null>> {
-  const probed: Record<string, string | null> = {};
-  const domain = websiteUrl.replace(/^https?:\/\//, "").replace(/^www\./, "").replace(/\/.*$/, "");
-  const slug = domain.split(".")[0];
-  const cleanName = companyName.toLowerCase().replace(/[^a-z0-9]/g, "");
-  const variations = [...new Set([slug, cleanName])];
+  const result: Record<string, string | null> = {};
+  const apifyToken = process.env.APIFY_API_TOKEN;
+  if (!apifyToken) return result;
 
-  for (const handle of variations) {
-    if (!probed.instagram) {
-      try {
-        const res = await fetch(`https://www.instagram.com/${handle}/`, {
-          method: "HEAD",
-          headers: { "User-Agent": "Mozilla/5.0" },
-          redirect: "manual",
-          signal: AbortSignal.timeout(5000),
-        });
-        if (res.status === 200) probed.instagram = `@${handle}`;
-      } catch { /* */ }
+  try {
+    const query = `"${companyName}" site:instagram.com OR site:twitter.com OR site:x.com OR site:linkedin.com`;
+    const res = await fetch(
+      `https://api.apify.com/v2/acts/apify~google-search-scraper/run-sync-get-dataset-items?token=${apifyToken}`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          queries: query,
+          maxPagesPerQuery: 1,
+          resultsPerPage: 10,
+        }),
+        signal: AbortSignal.timeout(30000),
+      }
+    );
+
+    if (!res.ok) return result;
+
+    const items = await res.json();
+    const organicResults = items?.[0]?.organicResults || items?.flatMap?.((i: any) => i.organicResults || []) || [];
+
+    const excluded = new Set(["share", "sharer", "intent", "hashtag", "explore", "p", "watch", "search", "login"]);
+
+    for (const item of organicResults) {
+      const url = item.url || item.link || "";
+
+      if (!result.instagram) {
+        const m = url.match(/instagram\.com\/([a-zA-Z0-9._]+)/i);
+        if (m && m[1] && !excluded.has(m[1].toLowerCase())) result.instagram = `@${m[1]}`;
+      }
+      if (!result.twitter) {
+        const m = url.match(/(?:twitter\.com|x\.com)\/([a-zA-Z0-9_]+)/i);
+        if (m && m[1] && !excluded.has(m[1].toLowerCase())) result.twitter = `@${m[1]}`;
+      }
+      if (!result.linkedin) {
+        const m = url.match(/linkedin\.com\/(?:company|in)\/([a-zA-Z0-9_-]+)/i);
+        if (m && m[1] && !excluded.has(m[1].toLowerCase())) result.linkedin = url;
+      }
     }
-    if (!probed.twitter) {
-      try {
-        const res = await fetch(`https://x.com/${handle}`, {
-          method: "HEAD",
-          headers: { "User-Agent": "Mozilla/5.0" },
-          redirect: "manual",
-          signal: AbortSignal.timeout(5000),
-        });
-        if (res.status === 200 || res.status === 302 || res.status === 301) probed.twitter = `@${handle}`;
-      } catch { /* */ }
-    }
+
+    console.log(`[Social Scrape] Google search found for ${companyName}: ${JSON.stringify(result)}`);
+  } catch (err) {
+    console.error(`[Social Scrape] Google search failed for ${companyName}:`, err);
   }
-  return probed;
+  return result;
 }
 
 // ── POST handler ──────────────────────────────────────────────────────

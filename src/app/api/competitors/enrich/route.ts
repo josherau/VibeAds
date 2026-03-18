@@ -334,98 +334,82 @@ Return ONLY a JSON object with these keys. Use null if not found:
 }
 
 /**
- * Searches for a company's social media accounts using Claude with web search capability.
- * Falls back to constructing likely profile URLs and checking if they exist.
+ * Searches Google for a company's social media accounts using Apify's Google Search scraper.
+ * Much more reliable than HEAD requests to social platforms (which block server IPs).
  */
 async function searchForSocials(
   companyName: string,
   websiteUrl: string
 ): Promise<Record<string, string | null>> {
   const result: Record<string, string | null> = {};
+  const apifyToken = process.env.APIFY_API_TOKEN;
 
-  // Strategy: Try common URL patterns and see if they resolve
-  const domain = websiteUrl.replace(/^https?:\/\//, "").replace(/^www\./, "").replace(/\/.*$/, "");
-  const slug = domain.split(".")[0]; // e.g., "saganpassport" from "saganpassport.com"
-  const cleanName = companyName.toLowerCase().replace(/[^a-z0-9]/g, "");
-
-  // Common handle variations to try
-  const variations = [slug, cleanName, companyName.replace(/\s+/g, "").toLowerCase()];
-  const uniqueVariations = [...new Set(variations)];
-
-  // Check Instagram
-  for (const handle of uniqueVariations) {
-    try {
-      const res = await fetch(`https://www.instagram.com/${handle}/`, {
-        method: "HEAD",
-        headers: { "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7)" },
-        redirect: "manual",
-        signal: AbortSignal.timeout(5000),
-      });
-      // Instagram returns 200 for existing profiles, 404 for non-existing
-      if (res.status === 200) {
-        result.instagram = `@${handle}`;
-        break;
-      }
-    } catch {
-      // continue
-    }
+  if (!apifyToken) {
+    console.log("[Enrich] No APIFY_API_TOKEN, skipping Google search for socials");
+    return result;
   }
 
-  // Check Twitter/X
-  for (const handle of uniqueVariations) {
-    try {
-      const res = await fetch(`https://x.com/${handle}`, {
-        method: "HEAD",
-        headers: { "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7)" },
-        redirect: "manual",
-        signal: AbortSignal.timeout(5000),
-      });
-      if (res.status === 200 || res.status === 302 || res.status === 301) {
-        result.twitter = `@${handle}`;
-        break;
+  try {
+    // Search Google for the company's social profiles
+    const query = `"${companyName}" site:instagram.com OR site:twitter.com OR site:x.com OR site:linkedin.com OR site:facebook.com OR site:youtube.com OR site:tiktok.com`;
+
+    const res = await fetch(
+      `https://api.apify.com/v2/acts/apify~google-search-scraper/run-sync-get-dataset-items?token=${apifyToken}`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          queries: query,
+          maxPagesPerQuery: 1,
+          resultsPerPage: 10,
+        }),
+        signal: AbortSignal.timeout(30000),
       }
-    } catch {
-      // continue
+    );
+
+    if (!res.ok) {
+      console.log(`[Enrich] Google search failed: ${res.status}`);
+      return result;
     }
+
+    const items = await res.json();
+    const organicResults = items?.[0]?.organicResults || items?.flatMap?.((i: any) => i.organicResults || []) || [];
+
+    // Social platform URL patterns
+    const platformPatterns: Record<string, RegExp> = {
+      instagram: /instagram\.com\/([a-zA-Z0-9._]+)/i,
+      twitter: /(?:twitter\.com|x\.com)\/([a-zA-Z0-9_]+)/i,
+      linkedin: /linkedin\.com\/(?:company|in)\/([a-zA-Z0-9_-]+)/i,
+      facebook: /facebook\.com\/([a-zA-Z0-9._-]+)/i,
+      youtube: /youtube\.com\/(?:@|channel\/|c\/|user\/)([a-zA-Z0-9_-]+)/i,
+      tiktok: /tiktok\.com\/@([a-zA-Z0-9._-]+)/i,
+    };
+
+    const excluded = new Set([
+      "share", "sharer", "intent", "hashtag", "explore", "p", "watch",
+      "search", "login", "signup", "settings", "help", "about",
+    ]);
+
+    for (const item of organicResults) {
+      const url = item.url || item.link || "";
+      for (const [platform, pattern] of Object.entries(platformPatterns)) {
+        if (result[platform]) continue; // Already found
+        const match = url.match(pattern);
+        if (match && match[1] && !excluded.has(match[1].toLowerCase())) {
+          if (platform === "instagram" || platform === "twitter" || platform === "tiktok") {
+            result[platform] = `@${match[1].replace(/^@/, "")}`;
+          } else if (platform === "linkedin" || platform === "facebook" || platform === "youtube") {
+            result[platform] = url;
+          }
+        }
+      }
+    }
+
+    console.log(`[Enrich] Google search results for ${companyName}: ${JSON.stringify(result)}`);
+  } catch (err) {
+    console.error(`[Enrich] Google search error for ${companyName}:`, err);
   }
 
-  // Check LinkedIn
-  for (const handle of uniqueVariations) {
-    try {
-      const res = await fetch(`https://www.linkedin.com/company/${handle}/`, {
-        method: "HEAD",
-        headers: { "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7)" },
-        redirect: "manual",
-        signal: AbortSignal.timeout(5000),
-      });
-      if (res.status === 200 || res.status === 302 || res.status === 301) {
-        result.linkedin = `https://www.linkedin.com/company/${handle}/`;
-        break;
-      }
-    } catch {
-      // continue
-    }
-  }
-
-  // Check Facebook
-  for (const handle of uniqueVariations) {
-    try {
-      const res = await fetch(`https://www.facebook.com/${handle}/`, {
-        method: "HEAD",
-        headers: { "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7)" },
-        redirect: "manual",
-        signal: AbortSignal.timeout(5000),
-      });
-      if (res.status === 200 || res.status === 302 || res.status === 301) {
-        result.facebook = `https://www.facebook.com/${handle}/`;
-        break;
-      }
-    } catch {
-      // continue
-    }
-  }
-
-  console.log(`[Enrich] URL probe results for ${companyName}: ${JSON.stringify(result)}`);
   return result;
 }
 
