@@ -379,7 +379,7 @@ Important instructions:
     if (brandError || !brand) {
       console.error("Brand save error:", brandError);
       return NextResponse.json(
-        { error: "Failed to save brand data" },
+        { error: `Failed to save brand data: ${brandError?.message || "unknown error"}`, details: brandError },
         { status: 500 }
       );
     }
