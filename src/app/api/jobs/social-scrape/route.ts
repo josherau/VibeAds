@@ -241,24 +241,33 @@ async function probeForSocials(
 
   try {
     const query = `"${companyName}" site:instagram.com OR site:twitter.com OR site:x.com OR site:linkedin.com`;
+    console.log(`[Social Scrape] Google search query: ${query}`);
     const res = await fetch(
       `https://api.apify.com/v2/acts/apify~google-search-scraper/run-sync-get-dataset-items?token=${apifyToken}`,
       {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          queries: query,
+          queries: [query],
           maxPagesPerQuery: 1,
           resultsPerPage: 10,
         }),
-        signal: AbortSignal.timeout(30000),
+        signal: AbortSignal.timeout(60000),
       }
     );
 
-    if (!res.ok) return result;
+    if (!res.ok) {
+      console.error(`[Social Scrape] Google search HTTP ${res.status} for ${companyName}`);
+      return result;
+    }
 
     const items = await res.json();
-    const organicResults = items?.[0]?.organicResults || items?.flatMap?.((i: any) => i.organicResults || []) || [];
+    console.log(`[Social Scrape] Google search raw response keys: ${JSON.stringify(Object.keys(items?.[0] || items || {}))}`);
+
+    // Apify returns array of search result pages; each has organicResults
+    const organicResults = Array.isArray(items)
+      ? items.flatMap((i: any) => i.organicResults || [])
+      : items?.organicResults || [];
 
     const excluded = new Set(["share", "sharer", "intent", "hashtag", "explore", "p", "watch", "search", "login"]);
 
@@ -353,13 +362,13 @@ export async function POST(request: Request) {
       );
     }
 
-    // 5. Fetch competitors (limit 5)
+    // 5. Fetch all active competitors
     const { data: competitors, error: compError } = await supabase
       .from("competitors")
       .select("*")
       .eq("brand_id", brandId)
       .eq("is_active", true)
-      .limit(5);
+      .limit(20);
 
     if (compError) {
       throw compError;
@@ -395,7 +404,7 @@ export async function POST(request: Request) {
         `[Social Scrape] Auto-enriching ${needsEnrichment.length} competitors to discover social handles`
       );
 
-      for (const comp of needsEnrichment.slice(0, 3)) {
+      for (const comp of needsEnrichment) {
         try {
           // First try website scraping
           const socials = await discoverSocialLinks(comp.website_url!);
@@ -439,8 +448,7 @@ export async function POST(request: Request) {
 
     // 5c. Filter to competitors that now have social handles
     const socialCompetitors = competitors
-      .filter((c: any) => c.instagram_handle || c.twitter_handle)
-      .slice(0, 3);
+      .filter((c: any) => c.instagram_handle || c.twitter_handle);
 
     if (socialCompetitors.length === 0) {
       await supabase
@@ -479,10 +487,12 @@ export async function POST(request: Request) {
             `[Social Scrape] Scraping Instagram for ${competitor.name} (@${competitor.instagram_handle})`
           );
 
+          // Strip @ prefix — Apify expects bare handles
+          const igHandle = competitor.instagram_handle.replace(/^@/, "");
           const apifyRunId = await startApifyActor(
             "apify~instagram-profile-scraper",
             {
-              usernames: [competitor.instagram_handle],
+              usernames: [igHandle],
               resultsLimit: 20,
             },
             apifyToken
@@ -551,9 +561,11 @@ export async function POST(request: Request) {
             `[Social Scrape] Scraping Twitter for ${competitor.name} (@${competitor.twitter_handle})`
           );
 
+          // Strip @ prefix — Apify expects bare handles
+          const twHandle = competitor.twitter_handle.replace(/^@/, "");
           const apifyRunId = await startApifyActor(
             "apify~twitter-scraper",
-            { handles: [competitor.twitter_handle], maxTweets: 20 },
+            { handles: [twHandle], maxTweets: 20 },
             apifyToken
           );
 

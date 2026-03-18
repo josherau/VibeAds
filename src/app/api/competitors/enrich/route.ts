@@ -359,11 +359,11 @@ async function searchForSocials(
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          queries: query,
+          queries: [query],
           maxPagesPerQuery: 1,
           resultsPerPage: 10,
         }),
-        signal: AbortSignal.timeout(30000),
+        signal: AbortSignal.timeout(60000),
       }
     );
 
@@ -373,7 +373,9 @@ async function searchForSocials(
     }
 
     const items = await res.json();
-    const organicResults = items?.[0]?.organicResults || items?.flatMap?.((i: any) => i.organicResults || []) || [];
+    const organicResults = Array.isArray(items)
+      ? items.flatMap((i: any) => i.organicResults || [])
+      : items?.organicResults || [];
 
     // Social platform URL patterns
     const platformPatterns: Record<string, RegExp> = {
