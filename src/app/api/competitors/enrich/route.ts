@@ -247,7 +247,79 @@ async function discoverSocialLinks(websiteUrl: string): Promise<Record<string, s
     }
   }
 
+  // If regex didn't find enough, try Claude to extract from the content
+  const foundCount = Object.values(result).filter(Boolean).length;
+  if (foundCount < 2 && html.length > 500) {
+    try {
+      const claudeResults = await extractSocialsWithClaude(html, websiteUrl);
+      for (const [platform, value] of Object.entries(claudeResults)) {
+        if (value && !result[platform]) {
+          result[platform] = value;
+        }
+      }
+    } catch (e) {
+      console.log("[Enrich] Claude extraction failed:", e);
+    }
+  }
+
   return result;
+}
+
+/**
+ * Uses Claude to extract social media links from HTML/markdown content.
+ * Handles cases where links are in JavaScript, data attributes, or icon-based links.
+ */
+async function extractSocialsWithClaude(
+  content: string,
+  websiteUrl: string
+): Promise<Record<string, string | null>> {
+  const anthropicKey = process.env.ANTHROPIC_API_KEY;
+  if (!anthropicKey) return {};
+
+  // Truncate content to avoid token limits
+  const truncated = content.slice(0, 20000);
+
+  const res = await fetch("https://api.anthropic.com/v1/messages", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "x-api-key": anthropicKey,
+      "anthropic-version": "2023-06-01",
+    },
+    body: JSON.stringify({
+      model: "claude-sonnet-4-20250514",
+      max_tokens: 1000,
+      system: `You extract social media profile URLs/handles from website HTML or markdown content. Look everywhere: href attributes, data attributes, JavaScript variables, JSON-LD, meta tags, og:tags, inline scripts, SVG links, etc.
+
+Return ONLY a JSON object with these keys. Use null if not found:
+{
+  "instagram": "@handle or null",
+  "twitter": "@handle or null",
+  "linkedin": "full URL or null",
+  "facebook": "full URL or null",
+  "youtube": "full URL or null",
+  "tiktok": "@handle or null",
+  "pinterest": "full URL or null"
+}`,
+      messages: [{
+        role: "user",
+        content: `Extract social media profiles from this website (${websiteUrl}):\n\n${truncated}`,
+      }],
+    }),
+  });
+
+  if (!res.ok) return {};
+
+  const data = await res.json();
+  const text = data.content?.[0]?.type === "text" ? data.content[0].text : "";
+  const jsonMatch = text.match(/\{[\s\S]*\}/);
+  if (!jsonMatch) return {};
+
+  try {
+    return JSON.parse(jsonMatch[0]);
+  } catch {
+    return {};
+  }
 }
 
 /**

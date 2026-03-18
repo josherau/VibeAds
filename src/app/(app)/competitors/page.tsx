@@ -545,6 +545,7 @@ export default function CompetitorsPage() {
                       href={c.website_url}
                       target="_blank"
                       rel="noopener noreferrer"
+                      onClick={(e) => e.stopPropagation()}
                       className="flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground transition-colors"
                     >
                       <Globe className="h-3 w-3" />
@@ -552,7 +553,7 @@ export default function CompetitorsPage() {
                     </a>
                   )}
                 </div>
-                <div className="flex items-center gap-2">
+                <div className="flex items-center gap-2" onClick={(e) => e.stopPropagation()}>
                   <Badge variant={c.is_active ? "default" : "secondary"}>
                     {c.is_active ? "Active" : "Inactive"}
                   </Badge>
