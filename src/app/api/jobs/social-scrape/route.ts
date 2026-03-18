@@ -255,6 +255,44 @@ async function probeForSocials(
   return result;
 }
 
+// ── Insert helper ────────────────────────────────────────────────────
+
+async function insertIgPost(supabase: any, competitor: any, post: any) {
+  const extId = post.id ?? post.shortCode ?? null;
+
+  if (extId) {
+    const { data: existing } = await supabase
+      .from("competitor_content")
+      .select("id")
+      .eq("external_id", String(extId))
+      .limit(1);
+    if (existing && existing.length > 0) return;
+  }
+
+  const caption = post.caption ?? post.text ?? post.alt ?? "";
+  await supabase.from("competitor_content").insert({
+    competitor_id: competitor.id,
+    source: "instagram",
+    external_id: extId ? String(extId) : null,
+    content_type: "social_post",
+    title: caption.slice(0, 200) || null,
+    body_text: caption || null,
+    media_urls: post.displayUrl
+      ? [post.displayUrl]
+      : post.imageUrl
+        ? [post.imageUrl]
+        : null,
+    engagement_metrics: {
+      likes: post.likesCount ?? post.likes ?? 0,
+      comments: post.commentsCount ?? post.comments ?? 0,
+      shares: post.sharesCount ?? 0,
+      url: post.url ?? (post.shortCode ? `https://instagram.com/p/${post.shortCode}` : null),
+    },
+    published_at: post.timestamp ?? post.takenAt ?? null,
+    raw_data: post,
+  });
+}
+
 // ── POST handler ──────────────────────────────────────────────────────
 
 export async function POST(request: Request) {
@@ -435,126 +473,103 @@ export async function POST(request: Request) {
     let twitterCount = 0;
     const errors: string[] = [];
 
-    // 6. Instagram scraping — use run-sync-get-dataset-items for reliable execution
-    for (const competitor of socialCompetitors) {
-      if (competitor.instagram_handle) {
-        try {
-          const igHandle = competitor.instagram_handle.replace(/^@/, "");
-          console.log(`[Social Scrape] Scraping Instagram for ${competitor.name} (${igHandle})`);
+    // Build handle-to-competitor maps for batching
+    const igHandleMap = new Map<string, typeof socialCompetitors[0]>();
+    const twHandleMap = new Map<string, typeof socialCompetitors[0]>();
 
-          // Use the Instagram scraper with direct URLs for more reliable results
-          const profileUrl = `https://www.instagram.com/${igHandle}/`;
+    for (const comp of socialCompetitors) {
+      if (comp.instagram_handle) {
+        const bare = comp.instagram_handle.replace(/^@/, "");
+        igHandleMap.set(bare.toLowerCase(), comp);
+      }
+      if (comp.twitter_handle) {
+        const bare = comp.twitter_handle.replace(/^@/, "");
+        twHandleMap.set(bare.toLowerCase(), comp);
+      }
+    }
+
+    // 6. BATCH scrape — one Apify call per platform, all handles at once, run in parallel
+    const igUrls = Array.from(igHandleMap.keys()).map(h => `https://www.instagram.com/${h}/`);
+    const twHandles = Array.from(twHandleMap.keys());
+
+    console.log(`[Social Scrape] Batching: ${igUrls.length} IG profiles, ${twHandles.length} TW handles`);
+
+    const scrapePromises: Promise<void>[] = [];
+
+    // --- Instagram batch ---
+    if (igUrls.length > 0) {
+      scrapePromises.push((async () => {
+        try {
           const results = await runApifyActorSync(
             "apify~instagram-scraper",
             {
-              directUrls: [profileUrl],
+              directUrls: igUrls,
               resultsType: "posts",
-              resultsLimit: 12,
+              resultsLimit: 10,
               searchType: "user",
             },
             apifyToken,
-            90
+            120
           );
 
-          console.log(`[Social Scrape] Instagram returned ${results.length} items for ${competitor.name}, first keys: ${JSON.stringify(Object.keys(results[0] || {})).slice(0, 300)}`);
+          console.log(`[Social Scrape] Instagram batch returned ${results.length} items, first keys: ${JSON.stringify(Object.keys(results[0] || {})).slice(0, 300)}`);
 
-          // The scraper may return posts directly or nested in profile objects
+          // Flatten posts — items may be posts directly or profile objects with nested posts
           const igPosts: any[] = [];
           for (const item of results) {
             if (item.latestPosts && Array.isArray(item.latestPosts)) {
-              igPosts.push(...item.latestPosts);
+              igPosts.push(...item.latestPosts.map((p: any) => ({ ...p, _ownerUsername: item.username ?? item.ownerUsername })));
             } else if (item.posts && Array.isArray(item.posts)) {
-              igPosts.push(...item.posts);
+              igPosts.push(...item.posts.map((p: any) => ({ ...p, _ownerUsername: item.username ?? item.ownerUsername })));
             } else if (item.caption !== undefined || item.shortCode || item.type === "Image" || item.type === "Video" || item.type === "Sidecar") {
-              // Item itself is a post
               igPosts.push(item);
             }
           }
 
-          console.log(`[Social Scrape] Instagram extracted ${igPosts.length} posts for ${competitor.name}`);
+          console.log(`[Social Scrape] Instagram extracted ${igPosts.length} total posts`);
 
           for (const post of igPosts) {
-            const extId = post.id ?? post.shortCode ?? post.inputUrl ?? null;
-
-            // Skip if we already have this post
-            if (extId) {
-              const { data: existing } = await supabase
-                .from("competitor_content")
-                .select("id")
-                .eq("external_id", String(extId))
-                .limit(1);
-              if (existing && existing.length > 0) {
-                instagramCount++;
-                continue;
-              }
-            }
-
-            const caption = post.caption ?? post.text ?? post.alt ?? "";
-            const record = {
-              competitor_id: competitor.id,
-              source: "instagram",
-              external_id: extId ? String(extId) : null,
-              content_type: "social_post",
-              title: caption.slice(0, 200) || null,
-              body_text: caption || null,
-              media_urls: post.displayUrl
-                ? [post.displayUrl]
-                : post.imageUrl
-                  ? [post.imageUrl]
-                  : post.url
-                    ? [post.url]
-                    : null,
-              engagement_metrics: {
-                likes: post.likesCount ?? post.likes ?? 0,
-                comments: post.commentsCount ?? post.comments ?? 0,
-                shares: post.sharesCount ?? 0,
-                url:
-                  post.url ??
-                  (post.shortCode
-                    ? `https://instagram.com/p/${post.shortCode}`
-                    : null),
-              },
-              published_at: post.timestamp ?? post.takenAt ?? null,
-              raw_data: post,
-            };
-
-            const { error } = await supabase
-              .from("competitor_content")
-              .insert(record);
-
-            if (error) {
-              console.error(`[Social Scrape] Instagram insert error: ${error.message}`);
+            // Match post to competitor by owner username
+            const ownerName = (post.ownerUsername ?? post._ownerUsername ?? post.owner?.username ?? "").toLowerCase();
+            const competitor = igHandleMap.get(ownerName);
+            if (!competitor) {
+              // Try to match by inputUrl
+              const inputUrl = (post.inputUrl ?? "").toLowerCase();
+              const matchedHandle = Array.from(igHandleMap.keys()).find(h => inputUrl.includes(h));
+              if (!matchedHandle) continue;
+              const matchedComp = igHandleMap.get(matchedHandle)!;
+              await insertIgPost(supabase, matchedComp, post);
             } else {
-              instagramCount++;
+              await insertIgPost(supabase, competitor, post);
             }
+            instagramCount++;
           }
         } catch (err) {
           const msg = err instanceof Error ? err.message : String(err);
-          console.error(`[Social Scrape] Instagram error for ${competitor.name}:`, msg);
-          errors.push(`IG ${competitor.name}: ${msg.slice(0, 100)}`);
+          console.error(`[Social Scrape] Instagram batch error:`, msg);
+          errors.push(`IG batch: ${msg.slice(0, 150)}`);
         }
-      }
+      })());
+    }
 
-      // 7. Twitter/X scraping
-      if (competitor.twitter_handle) {
+    // --- Twitter batch ---
+    if (twHandles.length > 0) {
+      scrapePromises.push((async () => {
         try {
-          const twHandle = competitor.twitter_handle.replace(/^@/, "");
-          console.log(`[Social Scrape] Scraping Twitter for ${competitor.name} (${twHandle})`);
-
           const results = await runApifyActorSync(
             "apify~tweet-scraper-v2",
             {
-              handles: [twHandle],
-              maxItems: 12,
+              handles: twHandles,
+              maxItems: 10 * twHandles.length,
               sort: "Latest",
             },
             apifyToken,
-            90
+            120
           );
 
-          console.log(`[Social Scrape] Twitter returned ${results.length} items for ${competitor.name}, first keys: ${JSON.stringify(Object.keys(results[0] || {})).slice(0, 300)}`);
+          console.log(`[Social Scrape] Twitter batch returned ${results.length} items, first keys: ${JSON.stringify(Object.keys(results[0] || {})).slice(0, 300)}`);
 
-          // Twitter scraper may return tweets directly or nested
+          // Flatten tweets
           const tweets: any[] = [];
           for (const item of results) {
             if (item.tweets && Array.isArray(item.tweets)) {
@@ -564,11 +579,17 @@ export async function POST(request: Request) {
             }
           }
 
-          console.log(`[Social Scrape] Twitter extracted ${tweets.length} tweets for ${competitor.name}`);
+          console.log(`[Social Scrape] Twitter extracted ${tweets.length} total tweets`);
 
           for (const tweet of tweets) {
-            const extId = tweet.id ?? tweet.id_str ?? null;
+            // Match tweet to competitor by author handle
+            const authorHandle = (
+              tweet.author?.userName ?? tweet.user?.screen_name ?? tweet.username ?? ""
+            ).toLowerCase();
+            const competitor = twHandleMap.get(authorHandle);
+            if (!competitor) continue;
 
+            const extId = tweet.id ?? tweet.id_str ?? null;
             if (extId) {
               const { data: existing } = await supabase
                 .from("competitor_content")
@@ -581,36 +602,25 @@ export async function POST(request: Request) {
               }
             }
 
-            const tweetText =
-              tweet.text ?? tweet.full_text ?? tweet.tweet?.text ?? "";
-            const record = {
-              competitor_id: competitor.id,
-              source: "twitter",
-              external_id: extId ? String(extId) : null,
-              content_type: "social_post",
-              title: tweetText.slice(0, 200) || null,
-              body_text: tweetText || null,
-              engagement_metrics: {
-                likes:
-                  tweet.likeCount ??
-                  tweet.favoriteCount ??
-                  tweet.favorite_count ??
-                  0,
-                comments: tweet.replyCount ?? tweet.reply_count ?? 0,
-                shares: tweet.retweetCount ?? tweet.retweet_count ?? 0,
-                url:
-                  tweet.url ??
-                  (tweet.id_str
-                    ? `https://x.com/i/status/${tweet.id_str}`
-                    : null),
-              },
-              published_at: tweet.createdAt ?? tweet.created_at ?? null,
-              raw_data: tweet,
-            };
-
+            const tweetText = tweet.text ?? tweet.full_text ?? tweet.tweet?.text ?? "";
             const { error } = await supabase
               .from("competitor_content")
-              .insert(record);
+              .insert({
+                competitor_id: competitor.id,
+                source: "twitter",
+                external_id: extId ? String(extId) : null,
+                content_type: "social_post",
+                title: tweetText.slice(0, 200) || null,
+                body_text: tweetText || null,
+                engagement_metrics: {
+                  likes: tweet.likeCount ?? tweet.favoriteCount ?? tweet.favorite_count ?? 0,
+                  comments: tweet.replyCount ?? tweet.reply_count ?? 0,
+                  shares: tweet.retweetCount ?? tweet.retweet_count ?? 0,
+                  url: tweet.url ?? (tweet.id_str ? `https://x.com/i/status/${tweet.id_str}` : null),
+                },
+                published_at: tweet.createdAt ?? tweet.created_at ?? null,
+                raw_data: tweet,
+              });
 
             if (error) {
               console.error(`[Social Scrape] Twitter insert error: ${error.message}`);
@@ -620,11 +630,14 @@ export async function POST(request: Request) {
           }
         } catch (err) {
           const msg = err instanceof Error ? err.message : String(err);
-          console.error(`[Social Scrape] Twitter error for ${competitor.name}:`, msg);
-          errors.push(`TW ${competitor.name}: ${msg.slice(0, 100)}`);
+          console.error(`[Social Scrape] Twitter batch error:`, msg);
+          errors.push(`TW batch: ${msg.slice(0, 150)}`);
         }
-      }
+      })());
     }
+
+    // Wait for both platform scrapes to complete in parallel
+    await Promise.allSettled(scrapePromises);
 
     const totalPosts = instagramCount + twitterCount;
     console.log(`[Social Scrape] Total posts scraped: ${totalPosts} (IG: ${instagramCount}, TW: ${twitterCount}), errors: ${errors.length}`);
