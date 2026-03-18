@@ -409,6 +409,22 @@ Important instructions:
       // Don't fail the whole request if competitors fail
     }
 
+    // Auto-enrich competitors with social accounts (fire and forget - don't block response)
+    if (competitors && competitors.length > 0) {
+      const competitorIds = competitors.map((c: any) => c.id);
+      // Call our own enrich endpoint asynchronously
+      const baseUrl = request.headers.get("origin") || request.headers.get("referer")?.replace(/\/[^/]*$/, "") || "";
+      if (baseUrl) {
+        fetch(`${baseUrl}/api/competitors/enrich`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ competitor_ids: competitorIds }),
+        }).catch((err) => {
+          console.error("Auto-enrich failed (non-blocking):", err);
+        });
+      }
+    }
+
     return NextResponse.json({
       brand,
       competitors: competitors || [],
