@@ -287,7 +287,7 @@ export default function SocialIntelligencePage() {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ brand_id: selectedBrandId }),
-        signal: AbortSignal.timeout(115000),
+        signal: AbortSignal.timeout(290000),
       });
 
       const data = await res.json();
