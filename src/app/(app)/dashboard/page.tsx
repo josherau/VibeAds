@@ -121,23 +121,48 @@ export default function DashboardPage() {
     }
     setIsRunning(true);
     try {
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), 290000); // 290s timeout (just under Vercel's 300s max)
+
       const res = await fetch("/api/pipeline/run", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ brand_id: selectedBrandId }),
+        signal: controller.signal,
       });
+      clearTimeout(timeout);
+
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || "Failed to run pipeline");
-      toast.success("Pipeline started successfully");
+      toast.success("Pipeline completed successfully!");
       fetchData();
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : "Failed to run pipeline");
+      if (err instanceof DOMException && err.name === "AbortError") {
+        toast.error("Pipeline timed out. Check the pipeline runs table for partial results.");
+      } else {
+        toast.error(err instanceof Error ? err.message : "Failed to run pipeline");
+      }
+      fetchData(); // Refresh to show any partial results
     } finally {
       setIsRunning(false);
     }
   }
 
-  function getStatusBadge(status: string) {
+  function getStatusBadge(status: string, startedAt?: string) {
+    // Detect stale "running" runs (older than 10 minutes)
+    if (status === "running" && startedAt) {
+      const startedTime = new Date(startedAt).getTime();
+      const tenMinutesAgo = Date.now() - 10 * 60 * 1000;
+      if (startedTime < tenMinutesAgo) {
+        return (
+          <Badge variant="destructive">
+            <AlertCircle className="mr-1 h-3 w-3" />
+            Timed Out
+          </Badge>
+        );
+      }
+    }
+
     switch (status) {
       case "completed":
         return (
@@ -303,7 +328,7 @@ export default function DashboardPage() {
               <TableBody>
                 {pipelineRuns.map((run) => (
                   <TableRow key={run.id}>
-                    <TableCell>{getStatusBadge(run.status)}</TableCell>
+                    <TableCell>{getStatusBadge(run.status, run.started_at)}</TableCell>
                     <TableCell className="text-muted-foreground">
                       {format(new Date(run.started_at), "MMM d, yyyy HH:mm")}
                     </TableCell>

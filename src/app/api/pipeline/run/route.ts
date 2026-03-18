@@ -66,7 +66,7 @@ async function startApifyActor(
 async function waitForApifyRun(
   runId: string,
   token: string,
-  maxWaitMs = 120000
+  maxWaitMs = 45000
 ): Promise<any[]> {
   const startTime = Date.now();
   while (Date.now() - startTime < maxWaitMs) {
@@ -216,6 +216,12 @@ async function stepResearchSocial(
     (c: any) => c.instagram_handle || c.twitter_handle || c.linkedin_url
   );
 
+  // Skip early if no competitors have social profiles configured
+  if (socialCompetitors.length === 0) {
+    console.log("[Social] No competitors have social profiles configured, skipping");
+    return { total: 0, skipped: true, reason: "No competitors with social profiles" };
+  }
+
   console.log(`[Social] Found ${socialCompetitors.length} competitors with social profiles`);
 
   let instagramCount = 0;
@@ -328,6 +334,100 @@ async function stepResearchSocial(
   };
 }
 
+async function scrapeSingleLandingPage(
+  supabase: ReturnType<typeof createServiceRoleClient>,
+  competitor: any,
+  firecrawlApiKey: string
+): Promise<boolean> {
+  try {
+    console.log(`[Landing Pages] Scraping ${competitor.name}: ${competitor.website_url}`);
+
+    const scrapeRes = await fetch("https://api.firecrawl.dev/v1/scrape", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${firecrawlApiKey}`,
+      },
+      body: JSON.stringify({
+        url: competitor.website_url,
+        formats: ["markdown"],
+      }),
+      signal: AbortSignal.timeout(30000), // 30 second timeout per scrape
+    });
+
+    if (!scrapeRes.ok) {
+      const errBody = await scrapeRes.text();
+      console.error(`[Landing Pages] Firecrawl error for ${competitor.name}: ${scrapeRes.status} ${errBody}`);
+      return false;
+    }
+
+    const scrapeData = await scrapeRes.json();
+    const markdown = scrapeData.data?.markdown ?? "";
+
+    if (!markdown) {
+      console.log(`[Landing Pages] No markdown content for ${competitor.name}`);
+      return false;
+    }
+
+    // Use Claude to parse the markdown into structured data
+    const parsedContent = await askClaude(
+      `You are a marketing analyst. Parse the following landing page content and extract structured data. Return ONLY valid JSON with this structure:
+{
+  "headline": "main H1 headline",
+  "subheadline": "supporting subheadline if present",
+  "ctas": ["list of call-to-action button texts"],
+  "offers": ["list of offers, deals, or pricing mentioned"],
+  "trust_signals": ["testimonials, client logos, certifications, stats mentioned"],
+  "value_propositions": ["key value props or benefits listed"],
+  "key_messaging_themes": ["recurring themes or angles"]
+}`,
+      `Landing page content for ${competitor.name} (${competitor.website_url}):\n\n${markdown.slice(0, 8000)}`
+    );
+
+    let structured: Record<string, unknown> = {};
+    try {
+      const jsonMatch = parsedContent.match(/\{[\s\S]*\}/);
+      if (jsonMatch) {
+        structured = JSON.parse(jsonMatch[0]);
+      }
+    } catch (parseErr) {
+      console.error(`[Landing Pages] Failed to parse Claude response for ${competitor.name}:`, parseErr);
+      structured = { raw_analysis: parsedContent };
+    }
+
+    const record = {
+      competitor_id: competitor.id,
+      brand_id: competitor.brand_id,
+      content_type: "landing_page",
+      platform: "website",
+      source: "website",
+      title: (structured.headline as string) ?? null,
+      body_text: markdown.slice(0, 10000),
+      url: competitor.website_url,
+      structured_data: structured,
+      external_id: `lp_${competitor.id}_${new Date().toISOString().split("T")[0]}`,
+      raw_data: {
+        markdown: markdown.slice(0, 20000),
+        firecrawl_metadata: scrapeData.data?.metadata,
+      },
+      fetched_at: new Date().toISOString(),
+    };
+
+    const { error: upsertError } = await supabase
+      .from("competitor_content")
+      .upsert(record, { onConflict: "external_id" });
+
+    if (upsertError) {
+      console.error(`[Landing Pages] Upsert error for ${competitor.name}: ${upsertError.message}`);
+      return false;
+    }
+    return true;
+  } catch (err) {
+    console.error(`[Landing Pages] Error for ${competitor.name}:`, err);
+    return false;
+  }
+}
+
 async function stepResearchLandingPages(
   supabase: ReturnType<typeof createServiceRoleClient>,
   brandId: string
@@ -343,101 +443,21 @@ async function stepResearchLandingPages(
     .select("*")
     .eq("brand_id", brandId)
     .eq("is_active", true)
-    .not("website_url", "is", null);
+    .not("website_url", "is", null)
+    .limit(3); // Limit to 3 competitors to stay within serverless timeout
 
   if (compError) throw compError;
 
-  console.log(`[Landing Pages] Found ${competitors?.length ?? 0} competitors with website URLs`);
+  console.log(`[Landing Pages] Scraping ${competitors?.length ?? 0} competitor landing pages in parallel`);
 
-  let pagesScraped = 0;
+  // Scrape all landing pages in parallel instead of sequentially
+  const results = await Promise.allSettled(
+    (competitors ?? []).map((comp) => scrapeSingleLandingPage(supabase, comp, firecrawlApiKey))
+  );
 
-  for (const competitor of competitors ?? []) {
-    try {
-      console.log(`[Landing Pages] Scraping ${competitor.name}: ${competitor.website_url}`);
-
-      const scrapeRes = await fetch("https://api.firecrawl.dev/v1/scrape", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${firecrawlApiKey}`,
-        },
-        body: JSON.stringify({
-          url: competitor.website_url,
-          formats: ["markdown"],
-        }),
-      });
-
-      if (!scrapeRes.ok) {
-        const errBody = await scrapeRes.text();
-        console.error(`[Landing Pages] Firecrawl error for ${competitor.name}: ${scrapeRes.status} ${errBody}`);
-        continue;
-      }
-
-      const scrapeData = await scrapeRes.json();
-      const markdown = scrapeData.data?.markdown ?? "";
-
-      if (!markdown) {
-        console.log(`[Landing Pages] No markdown content for ${competitor.name}`);
-        continue;
-      }
-
-      // Use Claude to parse the markdown into structured data
-      const parsedContent = await askClaude(
-        `You are a marketing analyst. Parse the following landing page content and extract structured data. Return ONLY valid JSON with this structure:
-{
-  "headline": "main H1 headline",
-  "subheadline": "supporting subheadline if present",
-  "ctas": ["list of call-to-action button texts"],
-  "offers": ["list of offers, deals, or pricing mentioned"],
-  "trust_signals": ["testimonials, client logos, certifications, stats mentioned"],
-  "value_propositions": ["key value props or benefits listed"],
-  "key_messaging_themes": ["recurring themes or angles"]
-}`,
-        `Landing page content for ${competitor.name} (${competitor.website_url}):\n\n${markdown.slice(0, 8000)}`
-      );
-
-      let structured: Record<string, unknown> = {};
-      try {
-        const jsonMatch = parsedContent.match(/\{[\s\S]*\}/);
-        if (jsonMatch) {
-          structured = JSON.parse(jsonMatch[0]);
-        }
-      } catch (parseErr) {
-        console.error(`[Landing Pages] Failed to parse Claude response for ${competitor.name}:`, parseErr);
-        structured = { raw_analysis: parsedContent };
-      }
-
-      const record = {
-        competitor_id: competitor.id,
-        brand_id: competitor.brand_id,
-        content_type: "landing_page",
-        platform: "website",
-        source: "website",
-        title: (structured.headline as string) ?? null,
-        body_text: markdown.slice(0, 10000),
-        url: competitor.website_url,
-        structured_data: structured,
-        external_id: `lp_${competitor.id}_${new Date().toISOString().split("T")[0]}`,
-        raw_data: {
-          markdown: markdown.slice(0, 20000),
-          firecrawl_metadata: scrapeData.data?.metadata,
-        },
-        fetched_at: new Date().toISOString(),
-      };
-
-      const { error: upsertError } = await supabase
-        .from("competitor_content")
-        .upsert(record, { onConflict: "external_id" });
-
-      if (upsertError) {
-        console.error(`[Landing Pages] Upsert error for ${competitor.name}: ${upsertError.message}`);
-      } else {
-        pagesScraped++;
-      }
-    } catch (err) {
-      console.error(`[Landing Pages] Error for ${competitor.name}:`, err);
-    }
-  }
+  const pagesScraped = results.filter(
+    (r) => r.status === "fulfilled" && r.value === true
+  ).length;
 
   console.log(`[Landing Pages] Complete. Pages scraped: ${pagesScraped}`);
   return { pages_scraped: pagesScraped };
@@ -1084,6 +1104,18 @@ export async function POST(request: Request) {
 
     // Use service role client for all pipeline writes (bypasses RLS)
     const supabase = createServiceRoleClient();
+
+    // Clean up stale "running" pipeline runs (older than 10 minutes = timed out)
+    const tenMinutesAgo = new Date(Date.now() - 10 * 60 * 1000).toISOString();
+    await supabase
+      .from("pipeline_runs")
+      .update({
+        status: "failed",
+        completed_at: new Date().toISOString(),
+        error_log: "Timed out - serverless function was killed before completion",
+      })
+      .eq("status", "running")
+      .lt("started_at", tenMinutesAgo);
 
     // Get brand with voice/positioning data
     const { data: brand, error: brandError } = await supabase

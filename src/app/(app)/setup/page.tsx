@@ -245,11 +245,12 @@ function PositioningAngleCard({ angle, index }: { angle: PositioningAngle; index
 
 export default function SetupPage() {
   const router = useRouter();
-  const { brands, setSelectedBrandId, refreshBrands } = useBrand();
+  const { brands, setSelectedBrandId, refreshBrands, loading: brandLoading } = useBrand();
   const [step, setStep] = useState<1 | 2 | 3>(1);
   const [url, setUrl] = useState("");
   const [currentAnalysisStep, setCurrentAnalysisStep] = useState(0);
   const [result, setResult] = useState<SetupResult | null>(null);
+  const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const abortRef = useRef(false);
 
   // Simulate step progression during analysis
@@ -288,16 +289,21 @@ export default function SetupPage() {
 
     setStep(2);
     setCurrentAnalysisStep(0);
+    setErrorMessage(null);
 
     try {
       const supabase = createClient();
       const { data: { session } } = await supabase.auth.getSession();
 
+      if (!session?.access_token) {
+        throw new Error("You need to be logged in. Please refresh the page and try again.");
+      }
+
       const res = await fetch("/api/auto-setup", {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
-          Authorization: `Bearer ${session?.access_token}`,
+          Authorization: `Bearer ${session.access_token}`,
         },
         body: JSON.stringify({ url: trimmed, mode: "new" }),
       });
@@ -318,11 +324,21 @@ export default function SetupPage() {
       await new Promise((r) => setTimeout(r, 800));
       setStep(3);
     } catch (err) {
-      toast.error(
-        err instanceof Error ? err.message : "Failed to analyze website"
-      );
+      const msg = err instanceof Error ? err.message : "Failed to analyze website";
+      setErrorMessage(msg);
+      toast.error(msg);
       setStep(1);
     }
+  }
+
+  const isAddingNew = !brandLoading && brands.length > 0;
+
+  if (brandLoading) {
+    return (
+      <div className="flex h-96 items-center justify-center">
+        <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
+      </div>
+    );
   }
 
   return (
@@ -334,17 +350,17 @@ export default function SetupPage() {
         {/* Header */}
         <div className="text-center space-y-3">
           <div className="mx-auto flex h-14 w-14 items-center justify-center rounded-2xl bg-primary">
-            {brands.length > 0 ? (
+            {isAddingNew ? (
               <Plus className="h-7 w-7 text-primary-foreground" />
             ) : (
               <Zap className="h-7 w-7 text-primary-foreground" />
             )}
           </div>
           <h1 className="text-3xl font-bold tracking-tight">
-            {brands.length > 0 ? "Add a New Business" : "Welcome to VibeAds"}
+            {isAddingNew ? "Add a New Business" : "Welcome to VibeAds"}
           </h1>
           <p className="text-muted-foreground text-lg">
-            {brands.length > 0
+            {isAddingNew
               ? "Enter a website URL to set up competitive intelligence for another business"
               : "Let\u0027s set up your competitive intelligence in seconds"}
           </p>
@@ -394,6 +410,11 @@ export default function SetupPage() {
               </CardDescription>
             </CardHeader>
             <CardContent>
+              {errorMessage && (
+                <div className="mb-4 rounded-lg border border-red-500/30 bg-red-500/10 px-4 py-3">
+                  <p className="text-sm text-red-400">{errorMessage}</p>
+                </div>
+              )}
               <form onSubmit={handleAnalyze} className="space-y-6">
                 <div className="space-y-2">
                   <Label htmlFor="website-url">Website URL</Label>
