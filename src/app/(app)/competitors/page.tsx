@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState, useCallback, useMemo } from "react";
+import { useRouter } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
 import {
   Card,
@@ -65,6 +66,7 @@ const emptyForm = {
 export default function CompetitorsPage() {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   const supabase = useMemo(() => createClient(), []);
+  const router = useRouter();
   const { selectedBrandId, selectedBrand, loading: brandLoading } = useBrand();
   const [competitors, setCompetitors] = useState<Competitor[]>([]);
   const [loading, setLoading] = useState(true);
@@ -534,7 +536,7 @@ export default function CompetitorsPage() {
       ) : (
         <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
           {competitors.map((c) => (
-            <Card key={c.id} className="relative">
+            <Card key={c.id} className="relative cursor-pointer hover:border-primary/50 transition-colors" onClick={() => router.push(`/competitors/${c.id}`)}>
               <CardHeader className="flex flex-row items-start justify-between pb-3">
                 <div className="space-y-1 pr-8">
                   <CardTitle className="text-base">{c.name}</CardTitle>
@@ -629,7 +631,7 @@ export default function CompetitorsPage() {
                       )}
                       {socialCount(c) === 0 && c.website_url && (
                         <button
-                          onClick={() => enrichCompetitor(c.id)}
+                          onClick={(e) => { e.stopPropagation(); enrichCompetitor(c.id); }}
                           className="flex items-center gap-1 text-xs text-primary hover:underline"
                         >
                           <Wand2 className="h-3 w-3" />
