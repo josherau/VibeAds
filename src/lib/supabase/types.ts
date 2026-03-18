@@ -465,6 +465,96 @@ export interface Database {
         };
         Relationships: [];
       };
+      social_posts: {
+        Row: {
+          id: string;
+          brand_id: string;
+          user_id: string;
+          platform: string;
+          post_type: string;
+          content: string;
+          hashtags: string[] | null;
+          media_prompt: string | null;
+          positioning_angle_type: string | null;
+          copywriting_framework: string | null;
+          topic: string | null;
+          status: string;
+          feedback: string | null;
+          created_at: string;
+        };
+        Insert: {
+          id?: string;
+          brand_id: string;
+          user_id: string;
+          platform: string;
+          post_type: string;
+          content: string;
+          hashtags?: string[] | null;
+          media_prompt?: string | null;
+          positioning_angle_type?: string | null;
+          copywriting_framework?: string | null;
+          topic?: string | null;
+          status?: string;
+          feedback?: string | null;
+          created_at?: string;
+        };
+        Update: {
+          id?: string;
+          brand_id?: string;
+          user_id?: string;
+          platform?: string;
+          post_type?: string;
+          content?: string;
+          hashtags?: string[] | null;
+          media_prompt?: string | null;
+          positioning_angle_type?: string | null;
+          copywriting_framework?: string | null;
+          topic?: string | null;
+          status?: string;
+          feedback?: string | null;
+          created_at?: string;
+        };
+        Relationships: [];
+      };
+      content_atoms: {
+        Row: {
+          id: string;
+          brand_id: string;
+          user_id: string;
+          source_type: string;
+          source_title: string;
+          source_content: string;
+          atoms: Json;
+          atom_count: number;
+          source_summary: string | null;
+          created_at: string;
+        };
+        Insert: {
+          id?: string;
+          brand_id: string;
+          user_id: string;
+          source_type: string;
+          source_title: string;
+          source_content: string;
+          atoms: Json;
+          atom_count?: number;
+          source_summary?: string | null;
+          created_at?: string;
+        };
+        Update: {
+          id?: string;
+          brand_id?: string;
+          user_id?: string;
+          source_type?: string;
+          source_title?: string;
+          source_content?: string;
+          atoms?: Json;
+          atom_count?: number;
+          source_summary?: string | null;
+          created_at?: string;
+        };
+        Relationships: [];
+      };
     };
     Views: {
       [_ in never]: never;
