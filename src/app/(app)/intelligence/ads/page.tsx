@@ -484,8 +484,8 @@ export default function AdIntelligencePage() {
             <h3 className="text-lg font-semibold mb-2">No ads tracked yet</h3>
             <p className="text-sm text-muted-foreground mb-4 max-w-md mx-auto">
               Click &ldquo;Refresh&rdquo; to scrape competitor ads from Meta Ad
-              Library and Google Ads Transparency. Make sure your competitors
-              have Meta Page IDs configured.
+              Library and Google Ads Transparency. Meta Page IDs will be
+              automatically discovered for your competitors.
             </p>
             <Button onClick={handleRefresh} disabled={refreshing} className="gap-2">
               {refreshing ? (

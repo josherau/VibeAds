@@ -19,17 +19,41 @@ export async function POST(request: Request) {
     }
 
     const body = await request.json();
-    const competitorIds: string[] = body.competitor_ids
+    const mode = body.mode || "full"; // "full" | "meta_page_id_only"
+    let competitorIds: string[] = body.competitor_ids
       ? body.competitor_ids
       : body.competitor_id
         ? [body.competitor_id]
         : [];
 
-    if (competitorIds.length === 0) {
-      return NextResponse.json({ error: "No competitor IDs provided" }, { status: 400 });
+    const supabase = createServiceRoleClient();
+
+    // If brand_id is provided with no specific IDs, enrich all competitors for the brand
+    // For "meta_page_id_only" mode, only fetch competitors missing meta_page_id
+    if (competitorIds.length === 0 && body.brand_id) {
+      let query = supabase
+        .from("competitors")
+        .select("id")
+        .eq("brand_id", body.brand_id)
+        .eq("is_active", true);
+
+      if (mode === "meta_page_id_only") {
+        query = query.is("meta_page_id", null);
+      }
+
+      const { data: brandCompetitors } = await query;
+      competitorIds = (brandCompetitors || []).map((c: any) => c.id);
     }
 
-    const supabase = createServiceRoleClient();
+    if (competitorIds.length === 0) {
+      return NextResponse.json({
+        success: true,
+        results: [],
+        message: mode === "meta_page_id_only"
+          ? "All competitors already have Meta Page IDs"
+          : "No competitor IDs provided",
+      });
+    }
 
     // Fetch competitors
     const { data: competitors, error: fetchError } = await supabase
@@ -44,12 +68,73 @@ export async function POST(request: Request) {
     const results: Array<{ id: string; name: string; found: Record<string, string | null>; error?: string }> = [];
 
     for (const competitor of competitors) {
-      if (!competitor.website_url) {
-        results.push({ id: competitor.id, name: competitor.name, found: {}, error: "No website URL" });
-        continue;
-      }
-
       try {
+        if (mode === "meta_page_id_only") {
+          // Fast path: only resolve Meta Page ID, skip full social discovery
+          if (competitor.meta_page_id) {
+            results.push({
+              id: competitor.id,
+              name: competitor.name,
+              found: { meta_page_id: competitor.meta_page_id },
+            });
+            continue;
+          }
+
+          // Try to find the Facebook URL from the website if we don't have it
+          let facebookUrl: string | null = null;
+          if (competitor.website_url) {
+            const socialLinks = await discoverSocialLinks(competitor.website_url);
+            facebookUrl = socialLinks.facebook;
+
+            // If we found a Facebook URL, save it
+            if (facebookUrl) {
+              // Store in notes for reference
+              const { data: current } = await supabase
+                .from("competitors")
+                .select("notes")
+                .eq("id", competitor.id)
+                .single();
+              const existingNotes = current?.notes || "";
+              if (!existingNotes.includes("facebook.com")) {
+                await supabase
+                  .from("competitors")
+                  .update({ notes: existingNotes ? `${existingNotes}\nFacebook: ${facebookUrl}` : `Facebook: ${facebookUrl}` })
+                  .eq("id", competitor.id);
+              }
+            }
+          }
+
+          // Multi-strategy resolution
+          const metaPageId = await resolveMetaPageId(
+            facebookUrl,
+            competitor.name,
+            competitor.website_url ?? undefined
+          );
+
+          if (metaPageId) {
+            await supabase
+              .from("competitors")
+              .update({ meta_page_id: metaPageId })
+              .eq("id", competitor.id);
+            console.log(`[Enrich] Resolved Meta Page ID for ${competitor.name}: ${metaPageId}`);
+          } else {
+            console.log(`[Enrich] Could not resolve Meta Page ID for ${competitor.name}`);
+          }
+
+          results.push({
+            id: competitor.id,
+            name: competitor.name,
+            found: { meta_page_id: metaPageId || null },
+          });
+          continue;
+        }
+
+        // Full enrichment mode
+        if (!competitor.website_url) {
+          results.push({ id: competitor.id, name: competitor.name, found: {}, error: "No website URL" });
+          continue;
+        }
+
         // Step 1: Fetch the website HTML to find social links
         const socialLinks = await discoverSocialLinks(competitor.website_url);
 
@@ -64,10 +149,14 @@ export async function POST(request: Request) {
           }
         }
 
-        // Step 2: Try to find Meta/Facebook page ID
+        // Step 2: Try to find Meta/Facebook page ID (multi-strategy)
         let metaPageId = competitor.meta_page_id;
-        if (!metaPageId && socialLinks.facebook) {
-          metaPageId = await resolveMetaPageId(socialLinks.facebook);
+        if (!metaPageId) {
+          metaPageId = await resolveMetaPageId(
+            socialLinks.facebook,
+            competitor.name,
+            competitor.website_url ?? undefined
+          );
         }
 
         // Step 3: Update the competitor record with discovered data
@@ -85,10 +174,7 @@ export async function POST(request: Request) {
         if (!competitor.youtube_url && socialLinks.youtube) {
           updates.youtube_url = socialLinks.youtube;
         }
-        if (!metaPageId && socialLinks.facebook) {
-          // Store the Facebook URL in notes if we can't resolve the page ID
-          updates.meta_page_id = metaPageId || null;
-        } else if (metaPageId && !competitor.meta_page_id) {
+        if (metaPageId && !competitor.meta_page_id) {
           updates.meta_page_id = metaPageId;
         }
 
@@ -96,6 +182,7 @@ export async function POST(request: Request) {
         const extraSocials: string[] = [];
         if (socialLinks.tiktok) extraSocials.push(`TikTok: ${socialLinks.tiktok}`);
         if (socialLinks.pinterest) extraSocials.push(`Pinterest: ${socialLinks.pinterest}`);
+        if (socialLinks.facebook && !metaPageId) extraSocials.push(`Facebook: ${socialLinks.facebook}`);
 
         if (extraSocials.length > 0) {
           // Append to existing notes
@@ -419,29 +506,253 @@ async function searchForSocials(
 
 /**
  * Tries to resolve a Facebook page URL to a Meta page ID.
- * Uses the Meta Graph API if a token is available.
+ * Uses multiple strategies in order of reliability:
+ * 1. Meta Graph API (requires META_ACCESS_TOKEN)
+ * 2. Scrape the Facebook page HTML for the page ID
+ * 3. Meta Ad Library API search by page name
+ * 4. Google search for the Facebook page ID
  */
-async function resolveMetaPageId(facebookUrl: string): Promise<string | null> {
-  const metaToken = process.env.META_ACCESS_TOKEN;
-  if (!metaToken) return null;
+async function resolveMetaPageId(facebookUrl: string | null, companyName?: string, websiteUrl?: string): Promise<string | null> {
+  // Strategy 1: Meta Graph API (most reliable if token exists)
+  if (facebookUrl) {
+    const metaToken = process.env.META_ACCESS_TOKEN;
+    if (metaToken) {
+      try {
+        const match = facebookUrl.match(/facebook\.com\/([^/?#]+)/);
+        if (match) {
+          const pageName = match[1];
+          const res = await fetch(
+            `https://graph.facebook.com/v21.0/${pageName}?fields=id,name&access_token=${metaToken}`,
+            { signal: AbortSignal.timeout(10000) }
+          );
+          if (res.ok) {
+            const data = await res.json();
+            if (data.id) {
+              console.log(`[Enrich] Graph API resolved ${pageName} → ${data.id}`);
+              return data.id;
+            }
+          }
+        }
+      } catch {
+        console.log("[Enrich] Graph API resolution failed, trying next strategy");
+      }
+    }
 
+    // Strategy 2: Scrape the Facebook page HTML for embedded page ID
+    try {
+      const pageId = await scrapeMetaPageIdFromHtml(facebookUrl);
+      if (pageId) {
+        console.log(`[Enrich] HTML scrape resolved ${facebookUrl} → ${pageId}`);
+        return pageId;
+      }
+    } catch {
+      console.log("[Enrich] HTML scrape failed, trying next strategy");
+    }
+  }
+
+  // Strategy 3: Meta Ad Library API search by company name
+  const metaToken = process.env.META_ACCESS_TOKEN;
+  if (metaToken && companyName) {
+    try {
+      const pageId = await searchMetaAdLibraryForPage(companyName, metaToken);
+      if (pageId) {
+        console.log(`[Enrich] Ad Library search resolved ${companyName} → ${pageId}`);
+        return pageId;
+      }
+    } catch {
+      console.log("[Enrich] Ad Library search failed, trying next strategy");
+    }
+  }
+
+  // Strategy 4: Google search for Facebook page ID
+  if (companyName) {
+    try {
+      const pageId = await searchGoogleForMetaPageId(companyName, websiteUrl);
+      if (pageId) {
+        console.log(`[Enrich] Google search resolved ${companyName} → ${pageId}`);
+        return pageId;
+      }
+    } catch {
+      console.log("[Enrich] Google search for page ID failed");
+    }
+  }
+
+  return null;
+}
+
+/**
+ * Scrapes a Facebook page's HTML to extract the page ID from meta tags
+ * and embedded JSON data. Facebook pages embed the page ID in several places.
+ */
+async function scrapeMetaPageIdFromHtml(facebookUrl: string): Promise<string | null> {
   try {
-    // Extract page name from URL
-    const match = facebookUrl.match(/facebook\.com\/([^/?]+)/);
-    if (!match) return null;
-    const pageName = match[1];
+    const res = await fetch(facebookUrl, {
+      headers: {
+        "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+        "Accept": "text/html,application/xhtml+xml",
+        "Accept-Language": "en-US,en;q=0.9",
+      },
+      redirect: "follow",
+      signal: AbortSignal.timeout(15000),
+    });
+
+    if (!res.ok) return null;
+    const html = await res.text();
+
+    // Pattern 1: "pageID":"123456789"
+    const pageIdMatch = html.match(/"pageID"\s*:\s*"(\d+)"/);
+    if (pageIdMatch) return pageIdMatch[1];
+
+    // Pattern 2: content="fb://page/123456789"
+    const fbPageMatch = html.match(/fb:\/\/page\/(\d+)/);
+    if (fbPageMatch) return fbPageMatch[1];
+
+    // Pattern 3: "page_id":"123456789" or "page_id":123456789
+    const pageIdMatch2 = html.match(/"page_id"\s*:\s*"?(\d+)"?/);
+    if (pageIdMatch2) return pageIdMatch2[1];
+
+    // Pattern 4: og:url or al:android:url with page ID
+    const ogMatch = html.match(/content="https?:\/\/www\.facebook\.com\/(\d+)/);
+    if (ogMatch) return ogMatch[1];
+
+    // Pattern 5: entity_id in JSON
+    const entityMatch = html.match(/"entity_id"\s*:\s*"(\d+)"/);
+    if (entityMatch) return entityMatch[1];
+
+    // Pattern 6: data-page-id attribute
+    const dataPageMatch = html.match(/data-page-id="(\d+)"/);
+    if (dataPageMatch) return dataPageMatch[1];
+
+  } catch (e) {
+    console.log("[Enrich] Facebook HTML scrape error:", e);
+  }
+
+  return null;
+}
+
+/**
+ * Searches the Meta Ad Library API for pages matching a company name.
+ * Returns the page ID of the best match.
+ */
+async function searchMetaAdLibraryForPage(companyName: string, metaToken: string): Promise<string | null> {
+  try {
+    const params = new URLSearchParams({
+      search_terms: companyName,
+      ad_type: "ALL",
+      ad_reached_countries: '["US"]',
+      fields: "page_id,page_name",
+      access_token: metaToken,
+      limit: "5",
+    });
 
     const res = await fetch(
-      `https://graph.facebook.com/v19.0/${pageName}?fields=id,name&access_token=${metaToken}`,
-      { signal: AbortSignal.timeout(10000) }
+      `https://graph.facebook.com/v21.0/ads_archive?${params.toString()}`,
+      { signal: AbortSignal.timeout(15000) }
     );
 
-    if (res.ok) {
-      const data = await res.json();
-      return data.id || null;
+    if (!res.ok) return null;
+    const data = await res.json();
+    const ads = data.data ?? [];
+
+    if (ads.length === 0) return null;
+
+    // Find the most common page_id (the actual advertiser)
+    const pageIdCounts: Record<string, { count: number; name: string }> = {};
+    for (const ad of ads) {
+      const pid = ad.page_id;
+      const pname = ad.page_name ?? "";
+      if (pid) {
+        if (!pageIdCounts[pid]) {
+          pageIdCounts[pid] = { count: 0, name: pname };
+        }
+        pageIdCounts[pid].count++;
+      }
+    }
+
+    // Return the page ID that appears most often, preferring name matches
+    let bestId: string | null = null;
+    let bestScore = 0;
+    const searchLower = companyName.toLowerCase();
+
+    for (const [pid, info] of Object.entries(pageIdCounts)) {
+      const nameMatch = info.name.toLowerCase().includes(searchLower) ||
+        searchLower.includes(info.name.toLowerCase()) ? 100 : 0;
+      const score = info.count + nameMatch;
+      if (score > bestScore) {
+        bestScore = score;
+        bestId = pid;
+      }
+    }
+
+    return bestId;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Uses Google search to find a company's Facebook page ID.
+ * Searches for the company's Facebook page and extracts the numeric ID.
+ */
+async function searchGoogleForMetaPageId(companyName: string, websiteUrl?: string): Promise<string | null> {
+  const apifyToken = process.env.APIFY_API_TOKEN;
+  if (!apifyToken) return null;
+
+  try {
+    const domain = websiteUrl
+      ? new URL(websiteUrl.startsWith("http") ? websiteUrl : `https://${websiteUrl}`).hostname.replace("www.", "")
+      : "";
+    const query = domain
+      ? `"${companyName}" OR "${domain}" site:facebook.com`
+      : `"${companyName}" facebook page`;
+
+    const res = await fetch(
+      `https://api.apify.com/v2/acts/apify~google-search-scraper/run-sync-get-dataset-items?token=${apifyToken}`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          queries: [query],
+          maxPagesPerQuery: 1,
+          resultsPerPage: 5,
+        }),
+        signal: AbortSignal.timeout(60000),
+      }
+    );
+
+    if (!res.ok) return null;
+
+    const items = await res.json();
+    const organicResults = Array.isArray(items)
+      ? items.flatMap((i: any) => i.organicResults || [])
+      : items?.organicResults || [];
+
+    for (const item of organicResults) {
+      const url = item.url || item.link || "";
+      // Look for facebook.com/pagename or facebook.com/profile.php?id=123
+      const fbMatch = url.match(/facebook\.com\/([^/?#]+)/);
+      if (fbMatch) {
+        const pageName = fbMatch[1];
+        // If it's already a numeric ID, use it directly
+        if (/^\d+$/.test(pageName)) {
+          return pageName;
+        }
+        // Skip generic Facebook paths
+        const skipPaths = new Set(["share", "sharer", "login", "help", "about", "pages", "groups", "events", "marketplace", "watch", "gaming", "search"]);
+        if (!skipPaths.has(pageName.toLowerCase())) {
+          // We found the Facebook page URL — try to scrape the ID from it
+          const scrapedId = await scrapeMetaPageIdFromHtml(url);
+          if (scrapedId) return scrapedId;
+          // If scraping failed, store the page name as a fallback
+          // The ad library can sometimes use page names too
+        }
+      }
+      // Check for profile.php?id=123 pattern
+      const profileMatch = url.match(/facebook\.com\/profile\.php\?id=(\d+)/);
+      if (profileMatch) return profileMatch[1];
     }
   } catch {
-    // Silently fail — Meta page ID is optional
+    // Silently fail
   }
 
   return null;

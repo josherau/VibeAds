@@ -368,6 +368,63 @@ export async function POST(request: Request) {
       `[Ad Scrape] Found ${competitors.length} active competitors`
     );
 
+    // 5b. Auto-discover missing Meta Page IDs before scraping
+    const missingMetaPageIds = competitors.filter(
+      (c: any) => !c.meta_page_id
+    );
+    if (missingMetaPageIds.length > 0 && (metaAccessToken || process.env.APIFY_API_TOKEN)) {
+      console.log(
+        `[Ad Scrape] ${missingMetaPageIds.length} competitors missing Meta Page IDs — auto-discovering...`
+      );
+
+      try {
+        const enrichRes = await fetch(
+          new URL("/api/competitors/enrich", request.url).toString(),
+          {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+              cookie: request.headers.get("cookie") || "",
+            },
+            body: JSON.stringify({
+              brand_id: brandId,
+              mode: "meta_page_id_only",
+            }),
+            signal: AbortSignal.timeout(90000),
+          }
+        );
+
+        if (enrichRes.ok) {
+          const enrichData = await enrichRes.json();
+          const discovered = (enrichData.results || []).filter(
+            (r: any) => r.found?.meta_page_id
+          );
+          console.log(
+            `[Ad Scrape] Auto-discovered ${discovered.length}/${missingMetaPageIds.length} Meta Page IDs`
+          );
+
+          // Refresh competitor data after enrichment
+          if (discovered.length > 0) {
+            const { data: refreshed } = await supabase
+              .from("competitors")
+              .select("*")
+              .eq("brand_id", brandId)
+              .eq("is_active", true)
+              .limit(20);
+            if (refreshed) {
+              competitors.length = 0;
+              competitors.push(...refreshed);
+            }
+          }
+        }
+      } catch (enrichErr) {
+        console.error(
+          "[Ad Scrape] Auto-discovery failed (non-blocking):",
+          enrichErr
+        );
+      }
+    }
+
     let totalMetaAds = 0;
     let totalGoogleAds = 0;
     const errors: string[] = [];
@@ -558,6 +615,10 @@ ${JSON.stringify(adSummaries, null, 2).slice(0, 14000)}`,
       google_ads_found: totalGoogleAds,
       total_ads: totalAds,
       competitors_processed: competitors.length,
+      competitors_with_meta_page_id: competitors.filter((c: any) => c.meta_page_id).length,
+      meta_page_ids_auto_discovered: missingMetaPageIds.length > 0
+        ? competitors.filter((c: any) => c.meta_page_id).length - (competitors.length - missingMetaPageIds.length)
+        : 0,
       errors: errors.length > 0 ? errors : undefined,
       analysis: analysisResult ? "completed" : "skipped",
     });
