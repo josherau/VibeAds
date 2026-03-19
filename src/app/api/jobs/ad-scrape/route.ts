@@ -109,10 +109,10 @@ async function scrapeMetaAds(
         country: "US",
         activeStatus: "active",
         adType: "all",
-        maxAds: 25,
+        maxAds: 15,
       },
       apifyToken,
-      120
+      60
     );
 
     let adsFound = 0;
@@ -432,9 +432,9 @@ export async function POST(request: Request) {
     let totalGoogleAds = 0;
     const errors: string[] = [];
 
-    // 6. Scrape ads — process sequentially with time guard (max 240s to leave room for analysis)
-    const MAX_SCRAPE_TIME_MS = 240_000;
-    const MAX_COMPETITORS_PER_RUN = 5; // Each competitor takes ~30-60s for Meta + Google
+    // 6. Scrape ads — process ALL competitors in parallel to fit in 300s timeout
+    //    Each Apify actor call takes 30-90s, so we run them all concurrently
+    const MAX_COMPETITORS_PER_RUN = 3; // 3 concurrent = ~90s total with parallel execution
     const compsToProcess = competitors.slice(0, MAX_COMPETITORS_PER_RUN);
     const compsDeferred = competitors.length - compsToProcess.length;
 
@@ -444,36 +444,43 @@ export async function POST(request: Request) {
       );
     }
 
-    for (const comp of compsToProcess) {
-      // Time guard — stop if we're running low on time
-      if (Date.now() - startTime > MAX_SCRAPE_TIME_MS) {
-        console.log(`[Ad Scrape] Time limit reached, stopping scrape loop`);
-        errors.push("Time limit reached — some competitors deferred to next run");
-        break;
-      }
+    // Run all competitors in parallel — each competitor does Meta + Google concurrently
+    const scrapeResults = await Promise.allSettled(
+      compsToProcess.map(async (comp: any) => {
+        try {
+          // Run Meta and Google in parallel for each competitor
+          const [metaResult, googleResult] = await Promise.allSettled([
+            scrapeMetaAds(comp, apifyToken, supabase, brandId),
+            scrapeGoogleAds(comp, apifyToken, supabase, brandId),
+          ]);
 
-      try {
-        // Meta Ad Library (via Apify scraper — no Meta API token needed)
-        const metaCount = await scrapeMetaAds(
-          comp,
-          apifyToken,
-          supabase,
-          brandId
-        );
-        totalMetaAds += metaCount;
+          const metaCount = metaResult.status === "fulfilled" ? metaResult.value : 0;
+          const googleCount = googleResult.status === "fulfilled" ? googleResult.value : 0;
 
-        // Google Ads Transparency (via Apify)
-        const googleCount = await scrapeGoogleAds(
-          comp,
-          apifyToken,
-          supabase,
-          brandId
-        );
-        totalGoogleAds += googleCount;
-      } catch (err) {
-        const msg = err instanceof Error ? err.message : String(err);
-        console.error(`[Ad Scrape] Error for ${comp.name}:`, msg);
-        errors.push(`${comp.name}: ${msg.slice(0, 150)}`);
+          if (metaResult.status === "rejected") {
+            console.error(`[Ad Scrape] Meta error for ${comp.name}:`, metaResult.reason);
+            errors.push(`${comp.name} (Meta): ${String(metaResult.reason).slice(0, 100)}`);
+          }
+          if (googleResult.status === "rejected") {
+            console.error(`[Ad Scrape] Google error for ${comp.name}:`, googleResult.reason);
+            errors.push(`${comp.name} (Google): ${String(googleResult.reason).slice(0, 100)}`);
+          }
+
+          return { meta: metaCount, google: googleCount };
+        } catch (err) {
+          const msg = err instanceof Error ? err.message : String(err);
+          console.error(`[Ad Scrape] Error for ${comp.name}:`, msg);
+          errors.push(`${comp.name}: ${msg.slice(0, 150)}`);
+          return { meta: 0, google: 0 };
+        }
+      })
+    );
+
+    // Aggregate results
+    for (const result of scrapeResults) {
+      if (result.status === "fulfilled") {
+        totalMetaAds += result.value.meta;
+        totalGoogleAds += result.value.google;
       }
     }
 
@@ -484,7 +491,7 @@ export async function POST(request: Request) {
 
     // 7. Run Claude analysis on collected ads
     let analysisResult: Record<string, any> | null = null;
-    if (totalAds > 0 || true) {
+    if (totalAds > 0) {
       try {
         // Fetch all competitor_ids for this brand
         const compIds = competitors.map((c: any) => c.id);
