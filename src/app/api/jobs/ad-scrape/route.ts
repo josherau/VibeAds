@@ -79,111 +79,101 @@ async function runApifyActorSync(
   return Array.isArray(items) ? items : [];
 }
 
-// ── Meta Ad Library ────────────────────────────────────────────────────
+// ── Meta Ad Library (via Apify) ────────────────────────────────────────
 
 /**
- * Scrape Meta ads for a competitor.
- * Supports three modes:
- * 1. Numeric page ID → search_page_ids (most precise)
- * 2. Facebook URL in meta_page_id → extract page name → search_terms
- * 3. No meta_page_id → search_terms with company name (broadest)
+ * Scrape Meta ads for a competitor using Apify's Meta Ad Library scraper.
+ * This bypasses the Meta Graph API (which requires special app permissions)
+ * and scrapes the public Ad Library website directly.
+ *
+ * Uses the `whoareyouanas/meta-ad-scraper` Apify actor (128K+ runs, well-maintained).
  */
 async function scrapeMetaAds(
   competitor: any,
-  metaAccessToken: string,
+  apifyToken: string,
   supabase: ReturnType<typeof createServiceRoleClient>,
   brandId: string
 ): Promise<number> {
-  const metaPageId = competitor.meta_page_id;
-
-  // Determine search strategy
-  let searchMode: "page_id" | "search_terms";
-  let searchValue: string;
-
-  if (metaPageId && /^\d+$/.test(metaPageId)) {
-    // Pure numeric page ID — use search_page_ids (most precise)
-    searchMode = "page_id";
-    searchValue = metaPageId;
-  } else {
-    // No numeric ID — use search_terms with company name
-    searchMode = "search_terms";
-    searchValue = competitor.name;
-  }
+  // Build search query — use company name (keyword search on Ad Library)
+  const searchQuery = competitor.name;
 
   console.log(
-    `[Ad Scrape] Fetching Meta ads for ${competitor.name} (${searchMode}: ${searchValue})`
+    `[Ad Scrape] Fetching Meta ads for ${competitor.name} via Apify (query: "${searchQuery}")`
   );
 
-  let totalAds = 0;
-  let nextCursor: string | null = null;
+  try {
+    const results = await runApifyActorSync(
+      "whoareyouanas~meta-ad-scraper",
+      {
+        searchQuery: searchQuery,
+        country: "US",
+        activeStatus: "active",
+        adType: "all",
+        maxAds: 25,
+      },
+      apifyToken,
+      120
+    );
 
-  do {
-    const params = new URLSearchParams({
-      ad_reached_countries: '["US"]',
-      fields:
-        "ad_creative_bodies,ad_creative_link_titles,ad_creative_link_descriptions,ad_creative_link_captions,ad_snapshot_url,ad_delivery_start_time,ad_delivery_stop_time,publisher_platforms,page_id,page_name",
-      access_token: metaAccessToken,
-      limit: "25",
-    });
+    let adsFound = 0;
 
-    if (searchMode === "page_id") {
-      params.set("search_page_ids", searchValue);
-    } else {
-      params.set("search_terms", searchValue);
-    }
+    for (const item of results) {
+      // Use libraryID as unique identifier
+      const externalId = item.libraryID
+        ? `meta_${item.libraryID}`
+        : `meta_${competitor.id}_${adsFound}`;
 
-    if (nextCursor) {
-      params.set("after", nextCursor);
-    }
+      // Determine if ad is from the competitor (keyword search can return tangential results)
+      // We'll store all results but tag them properly
+      const adFormat = item.format ?? (item.videos?.length > 0 ? "video" : "image");
+      const isActive = item.active !== false;
 
-    const url = `https://graph.facebook.com/v21.0/ads_archive?${params.toString()}`;
-    const response = await fetch(url, {
-      signal: AbortSignal.timeout(30000),
-    });
+      // Parse dates
+      let firstSeen = new Date().toISOString();
+      let lastSeen = new Date().toISOString();
+      try {
+        if (item.startDate) {
+          const parsed = new Date(item.startDate);
+          if (!isNaN(parsed.getTime())) firstSeen = parsed.toISOString();
+        }
+        if (item.endDate) {
+          const parsed = new Date(item.endDate);
+          if (!isNaN(parsed.getTime())) lastSeen = parsed.toISOString();
+        }
+      } catch { /* use defaults */ }
 
-    if (!response.ok) {
-      const errorBody = await response.text();
-      console.error(
-        `[Ad Scrape] Meta API error for ${competitor.name}: ${response.status} ${errorBody}`
-      );
-      break;
-    }
-
-    const data = await response.json();
-    const ads = data.data ?? [];
-
-    // If using search_terms, try to auto-save the page_id from results
-    if (searchMode === "search_terms" && ads.length > 0 && !competitor.meta_page_id) {
-      const firstPageId = ads[0].page_id;
-      if (firstPageId) {
-        console.log(`[Ad Scrape] Auto-discovered Meta page_id for ${competitor.name}: ${firstPageId}`);
-        await supabase
-          .from("competitors")
-          .update({ meta_page_id: String(firstPageId) })
-          .eq("id", competitor.id);
+      // Extract media URLs
+      const mediaUrls: string[] = [];
+      if (item.images?.length > 0) {
+        for (const img of item.images) {
+          if (img.url) mediaUrls.push(img.url);
+        }
       }
-    }
-
-    for (const ad of ads) {
-      const isActive = !ad.ad_delivery_stop_time;
-      const externalId =
-        ad.ad_snapshot_url ?? `meta_${competitor.id}_${totalAds}`;
+      if (item.videos?.length > 0) {
+        for (const vid of item.videos) {
+          if (vid.url) mediaUrls.push(vid.url);
+        }
+      }
 
       const adRecord = {
         competitor_id: competitor.id,
         source: "meta_ad_library" as const,
         external_id: externalId,
-        ad_type: "image" as const,
-        headline: ad.ad_creative_link_titles?.[0] ?? null,
-        body_text: ad.ad_creative_bodies?.[0] ?? null,
-        cta_text: ad.ad_creative_link_captions?.[0] ?? null,
-        landing_page_url: null as string | null,
+        ad_type: adFormat as string,
+        headline: item.linkTitle || null,
+        body_text: item.body || null,
+        cta_text: item.ctaText || null,
+        media_urls: mediaUrls.length > 0 ? mediaUrls : null,
+        landing_page_url: item.linkUrl || item.ctaUrl || null,
         is_active: isActive,
-        first_seen_at: ad.ad_delivery_start_time ?? new Date().toISOString(),
-        last_seen_at: isActive
-          ? new Date().toISOString()
-          : (ad.ad_delivery_stop_time ?? new Date().toISOString()),
-        raw_data: ad,
+        first_seen_at: firstSeen,
+        last_seen_at: lastSeen,
+        raw_data: {
+          ...item,
+          advertiser_name: item.brand,
+          platforms: item.platforms,
+          similar_ad_count: item.similarAdCount,
+        },
       };
 
       const { error: upsertError } = await supabase
@@ -191,24 +181,21 @@ async function scrapeMetaAds(
         .upsert(adRecord, { onConflict: "external_id" });
 
       if (upsertError) {
-        console.error(`[Ad Scrape] Upsert error: ${upsertError.message}`);
+        console.error(`[Ad Scrape] Meta upsert error: ${upsertError.message}`);
       } else {
-        totalAds++;
+        adsFound++;
       }
     }
 
-    nextCursor = data.paging?.cursors?.after ?? null;
-    const hasNextPage = data.paging?.next != null;
-    if (!hasNextPage) nextCursor = null;
-
-    // For search_terms mode, only fetch 1 page to avoid pulling irrelevant ads
-    if (searchMode === "search_terms") nextCursor = null;
-  } while (nextCursor);
-
-  console.log(
-    `[Ad Scrape] Found ${totalAds} Meta ads for ${competitor.name}`
-  );
-  return totalAds;
+    console.log(
+      `[Ad Scrape] Found ${adsFound} Meta ads for ${competitor.name}`
+    );
+    return adsFound;
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    console.error(`[Ad Scrape] Meta Apify error for ${competitor.name}: ${msg}`);
+    return 0;
+  }
 }
 
 // ── Google Ads Transparency (via Apify) ────────────────────────────────
@@ -346,17 +333,16 @@ export async function POST(request: Request) {
     const runId = run.id;
     const startTime = Date.now();
 
-    const metaAccessToken = process.env.META_ACCESS_TOKEN;
     const apifyToken = process.env.APIFY_API_TOKEN;
 
-    if (!metaAccessToken && !apifyToken) {
+    if (!apifyToken) {
       await supabase
         .from("pipeline_runs")
         .update({
           status: "failed",
           error_log: {
             message:
-              "Neither META_ACCESS_TOKEN nor APIFY_API_TOKEN is configured",
+              "APIFY_API_TOKEN is not configured — required for Meta & Google ad scraping",
           },
           completed_at: new Date().toISOString(),
           duration_ms: Date.now() - startTime,
@@ -366,7 +352,7 @@ export async function POST(request: Request) {
       return NextResponse.json(
         {
           error:
-            "Neither META_ACCESS_TOKEN nor APIFY_API_TOKEN is configured",
+            "APIFY_API_TOKEN is not configured — required for Meta & Google ad scraping",
         },
         { status: 500 }
       );
@@ -442,52 +428,54 @@ export async function POST(request: Request) {
       }
     }
 
-    // 5b. Track competitors without numeric page IDs for reporting
-    const missingMetaPageIds = competitors.filter(
-      (c: any) => !c.meta_page_id || !/^\d+$/.test(c.meta_page_id)
-    );
-    if (missingMetaPageIds.length > 0) {
-      console.log(
-        `[Ad Scrape] ${missingMetaPageIds.length} competitors without numeric Meta Page IDs — will use search_terms fallback`
-      );
-    }
-
     let totalMetaAds = 0;
     let totalGoogleAds = 0;
     const errors: string[] = [];
 
-    // 6. Scrape ads from each source
-    const scrapePromises = competitors.map(async (comp: any) => {
+    // 6. Scrape ads — process sequentially with time guard (max 240s to leave room for analysis)
+    const MAX_SCRAPE_TIME_MS = 240_000;
+    const MAX_COMPETITORS_PER_RUN = 5; // Each competitor takes ~30-60s for Meta + Google
+    const compsToProcess = competitors.slice(0, MAX_COMPETITORS_PER_RUN);
+    const compsDeferred = competitors.length - compsToProcess.length;
+
+    if (compsDeferred > 0) {
+      console.log(
+        `[Ad Scrape] Processing ${compsToProcess.length} of ${competitors.length} competitors (${compsDeferred} deferred to next run)`
+      );
+    }
+
+    for (const comp of compsToProcess) {
+      // Time guard — stop if we're running low on time
+      if (Date.now() - startTime > MAX_SCRAPE_TIME_MS) {
+        console.log(`[Ad Scrape] Time limit reached, stopping scrape loop`);
+        errors.push("Time limit reached — some competitors deferred to next run");
+        break;
+      }
+
       try {
-        // Meta Ad Library — works with page_id OR search_terms (company name)
-        if (metaAccessToken) {
-          const metaCount = await scrapeMetaAds(
-            comp,
-            metaAccessToken,
-            supabase,
-            brandId
-          );
-          totalMetaAds += metaCount;
-        }
+        // Meta Ad Library (via Apify scraper — no Meta API token needed)
+        const metaCount = await scrapeMetaAds(
+          comp,
+          apifyToken,
+          supabase,
+          brandId
+        );
+        totalMetaAds += metaCount;
 
         // Google Ads Transparency (via Apify)
-        if (apifyToken) {
-          const googleCount = await scrapeGoogleAds(
-            comp,
-            apifyToken,
-            supabase,
-            brandId
-          );
-          totalGoogleAds += googleCount;
-        }
+        const googleCount = await scrapeGoogleAds(
+          comp,
+          apifyToken,
+          supabase,
+          brandId
+        );
+        totalGoogleAds += googleCount;
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);
         console.error(`[Ad Scrape] Error for ${comp.name}:`, msg);
         errors.push(`${comp.name}: ${msg.slice(0, 150)}`);
       }
-    });
-
-    await Promise.allSettled(scrapePromises);
+    }
 
     const totalAds = totalMetaAds + totalGoogleAds;
     console.log(
@@ -641,10 +629,9 @@ ${JSON.stringify(adSummaries, null, 2).slice(0, 14000)}`,
       meta_ads_found: totalMetaAds,
       google_ads_found: totalGoogleAds,
       total_ads: totalAds,
-      competitors_processed: competitors.length,
-      competitors_skipped: skippedCount,
-      competitors_with_numeric_page_id: competitors.filter((c: any) => c.meta_page_id && /^\d+$/.test(c.meta_page_id)).length,
-      competitors_using_name_search: missingMetaPageIds.length,
+      competitors_processed: compsToProcess.length,
+      competitors_skipped_cooldown: skippedCount,
+      competitors_deferred: compsDeferred,
       errors: errors.length > 0 ? errors : undefined,
       analysis: analysisResult ? "completed" : "skipped",
     });
