@@ -39,6 +39,7 @@ import {
   Activity,
   Play,
   Calendar,
+  Heart,
 } from "lucide-react";
 import {
   format,
@@ -103,6 +104,23 @@ interface YouTubeAnalysis {
     power_words?: string[];
     avg_title_length?: number;
   };
+  top_performers?: {
+    title: string;
+    channel: string;
+    views: number;
+    likes: number;
+    comments: number;
+    why_it_worked: string;
+    duplication_blueprint: string;
+  }[];
+  content_opportunities?: {
+    idea: string;
+    rationale: string;
+    format: string;
+    target_length: string;
+    reference_videos: string[];
+    priority: "high" | "medium" | "low";
+  }[];
   recommendations?: string[];
 }
 
@@ -1218,6 +1236,135 @@ export default function YouTubeIntelligencePage() {
           </CardContent>
         </Card>
       </div>
+
+      {/* 🏆 Top Performers — What's Working & How to Replicate */}
+      {analysis?.top_performers && analysis.top_performers.length > 0 && (
+        <Card>
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2">
+              <TrendingUp className="h-5 w-5 text-amber-500" />
+              🏆 Top Performing Competitor Content
+            </CardTitle>
+            <CardDescription>
+              Why these videos won and exactly how to create your own versions
+            </CardDescription>
+          </CardHeader>
+          <CardContent>
+            <div className="space-y-6">
+              {analysis.top_performers.map((tp, i) => (
+                <div
+                  key={i}
+                  className="rounded-lg border bg-card p-4 space-y-3"
+                >
+                  <div className="flex items-start justify-between gap-4">
+                    <div className="space-y-1">
+                      <h4 className="font-semibold text-sm leading-tight">
+                        {tp.title}
+                      </h4>
+                      <p className="text-xs text-muted-foreground">
+                        by {tp.channel}
+                      </p>
+                    </div>
+                    <div className="flex gap-3 text-xs text-muted-foreground shrink-0">
+                      <span className="flex items-center gap-1">
+                        <Eye className="h-3 w-3" />
+                        {(tp.views ?? 0).toLocaleString()}
+                      </span>
+                      <span className="flex items-center gap-1">
+                        <Heart className="h-3 w-3" />
+                        {(tp.likes ?? 0).toLocaleString()}
+                      </span>
+                      <span className="flex items-center gap-1">
+                        <MessageCircle className="h-3 w-3" />
+                        {(tp.comments ?? 0).toLocaleString()}
+                      </span>
+                    </div>
+                  </div>
+
+                  <div className="rounded-md bg-green-500/5 border border-green-500/20 p-3">
+                    <p className="text-xs font-medium text-green-400 mb-1">
+                      ✅ Why It Worked
+                    </p>
+                    <p className="text-sm text-muted-foreground">
+                      {tp.why_it_worked}
+                    </p>
+                  </div>
+
+                  <div className="rounded-md bg-blue-500/5 border border-blue-500/20 p-3">
+                    <p className="text-xs font-medium text-blue-400 mb-1">
+                      🎯 Your Duplication Blueprint
+                    </p>
+                    <p className="text-sm text-muted-foreground">
+                      {tp.duplication_blueprint}
+                    </p>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </CardContent>
+        </Card>
+      )}
+
+      {/* 💡 Content Opportunities — What You Should Create */}
+      {analysis?.content_opportunities &&
+        analysis.content_opportunities.length > 0 && (
+          <Card>
+            <CardHeader>
+              <CardTitle className="flex items-center gap-2">
+                <Sparkles className="h-5 w-5 text-blue-500" />
+                💡 Content Opportunities
+              </CardTitle>
+              <CardDescription>
+                Specific video ideas based on competitor gaps and top-performing
+                patterns
+              </CardDescription>
+            </CardHeader>
+            <CardContent>
+              <div className="grid gap-4 md:grid-cols-2">
+                {analysis.content_opportunities.map((opp, i) => (
+                  <div
+                    key={i}
+                    className="rounded-lg border bg-card p-4 space-y-2"
+                  >
+                    <div className="flex items-start justify-between gap-2">
+                      <h4 className="font-semibold text-sm leading-tight">
+                        {opp.idea}
+                      </h4>
+                      <Badge
+                        variant={
+                          opp.priority === "high"
+                            ? "destructive"
+                            : opp.priority === "medium"
+                              ? "default"
+                              : "secondary"
+                        }
+                        className="shrink-0 text-[10px]"
+                      >
+                        {opp.priority}
+                      </Badge>
+                    </div>
+                    <p className="text-xs text-muted-foreground">
+                      {opp.rationale}
+                    </p>
+                    <div className="flex items-center gap-3 text-xs text-muted-foreground pt-1">
+                      <span className="rounded bg-muted px-1.5 py-0.5">
+                        {opp.format}
+                      </span>
+                      <span className="rounded bg-muted px-1.5 py-0.5">
+                        {opp.target_length}
+                      </span>
+                    </div>
+                    {opp.reference_videos && opp.reference_videos.length > 0 && (
+                      <p className="text-[11px] text-muted-foreground/60 pt-1">
+                        Inspired by: {opp.reference_videos.join(", ")}
+                      </p>
+                    )}
+                  </div>
+                ))}
+              </div>
+            </CardContent>
+          </Card>
+        )}
 
       {/* AI Recommendations */}
       {analysis?.recommendations && analysis.recommendations.length > 0 && (

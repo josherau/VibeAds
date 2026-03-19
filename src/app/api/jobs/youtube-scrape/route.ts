@@ -663,7 +663,7 @@ export async function POST(request: Request) {
           }));
 
           const analysisResponse = await askClaude(
-            `You are a YouTube content intelligence analyst. Analyze competitor YouTube video data and extract actionable insights for a CMO. Return ONLY valid JSON.`,
+            `You are a CMO-grade YouTube content intelligence analyst. Analyze competitor YouTube videos to identify what's working, what's not, and exactly what content the user should create to compete. Be specific, actionable, and data-driven. Return ONLY valid JSON.`,
             `Analyze these competitor YouTube videos and return a JSON object with this structure:
 {
   "content_themes": [{ "theme": "string", "count": number, "description": "string", "example_videos": ["string"] }],
@@ -690,8 +690,33 @@ export async function POST(request: Request) {
     "power_words": ["string"],
     "avg_title_length": number
   },
+  "top_performers": [
+    {
+      "title": "string (exact video title)",
+      "channel": "string (competitor name)",
+      "views": number,
+      "likes": number,
+      "comments": number,
+      "why_it_worked": "string (2-3 sentences explaining what made this video successful — topic, format, hook, timing, etc.)",
+      "duplication_blueprint": "string (specific instructions for recreating similar content — title formula, format, key talking points, ideal length, CTA approach)"
+    }
+  ],
+  "content_opportunities": [
+    {
+      "idea": "string (specific video title/concept)",
+      "rationale": "string (why this will work based on competitor data)",
+      "format": "string (tutorial, listicle, interview, case study, etc.)",
+      "target_length": "string (e.g. '8-12 minutes')",
+      "reference_videos": ["string (competitor videos this is inspired by)"],
+      "priority": "high | medium | low"
+    }
+  ],
   "recommendations": ["string"]
 }
+
+IMPORTANT for top_performers: Pick the 5-7 best performing videos by engagement (views + likes*10 + comments*30). For each one, write a detailed "why_it_worked" and "duplication_blueprint" that a content team could immediately act on.
+
+IMPORTANT for content_opportunities: Suggest 5-8 specific video ideas the user should create, based on gaps you see and what's performing well for competitors. Be very specific with titles and formats, not generic.
 
 Videos data:
 ${JSON.stringify(videoSummaries, null, 2).slice(0, 12000)}`
