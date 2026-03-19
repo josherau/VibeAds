@@ -297,7 +297,7 @@ export default function SocialIntelligencePage() {
     }
   }, [fetchData, brandLoading, selectedBrandId]);
 
-  async function handleRefresh() {
+  async function handleRefresh(force = false) {
     if (!selectedBrandId) {
       toast.error("Please select a business first");
       return;
@@ -331,12 +331,15 @@ export default function SocialIntelligencePage() {
         }
       }
 
-      toast.info("Scraping social media posts...");
+      toast.info(force
+        ? "Force refreshing all social media posts..."
+        : "Updating social posts (skipping recently scraped competitors)..."
+      );
 
       const res = await fetch("/api/jobs/social-scrape", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ brand_id: selectedBrandId }),
+        body: JSON.stringify({ brand_id: selectedBrandId, force }),
         signal: AbortSignal.timeout(290000),
       });
 
@@ -791,17 +794,27 @@ export default function SocialIntelligencePage() {
               {selectedBrand ? ` for ${selectedBrand.name}` : ""}
             </p>
           </div>
-          <Button
-            onClick={handleRefresh}
-            disabled={scraping || !selectedBrandId}
-          >
-            {scraping ? (
-              <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-            ) : (
-              <RefreshCw className="mr-2 h-4 w-4" />
-            )}
-            Refresh Social Data
-          </Button>
+          <div className="flex gap-2">
+            <Button
+              onClick={() => handleRefresh(false)}
+              disabled={scraping || !selectedBrandId}
+            >
+              {scraping ? (
+                <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+              ) : (
+                <RefreshCw className="mr-2 h-4 w-4" />
+              )}
+              Update
+            </Button>
+            <Button
+              onClick={() => handleRefresh(true)}
+              disabled={scraping || !selectedBrandId}
+              variant="outline"
+              title="Re-scrape all competitors, even recently scraped ones"
+            >
+              Force Refresh
+            </Button>
+          </div>
         </div>
 
         <Card>
@@ -863,17 +876,26 @@ export default function SocialIntelligencePage() {
               ))}
             </SelectContent>
           </Select>
-          <Button
-            onClick={handleRefresh}
-            disabled={scraping || !selectedBrandId}
-          >
-            {scraping ? (
-              <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-            ) : (
-              <RefreshCw className="mr-2 h-4 w-4" />
-            )}
-            Refresh
-          </Button>
+          <div className="flex gap-2">
+            <Button
+              onClick={() => handleRefresh(false)}
+              disabled={scraping || !selectedBrandId}
+            >
+              {scraping ? (
+                <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+              ) : (
+                <RefreshCw className="mr-2 h-4 w-4" />
+              )}
+              Update
+            </Button>
+            <Button
+              onClick={() => handleRefresh(true)}
+              disabled={scraping || !selectedBrandId}
+              variant="outline"
+            >
+              Force Refresh
+            </Button>
+          </div>
         </div>
       </div>
 

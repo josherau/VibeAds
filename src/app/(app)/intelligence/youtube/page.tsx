@@ -346,19 +346,22 @@ export default function YouTubeIntelligencePage() {
     }
   }, [fetchData, brandLoading, selectedBrandId]);
 
-  async function handleRefresh() {
+  async function handleRefresh(force = false) {
     if (!selectedBrandId) {
       toast.error("Please select a business first");
       return;
     }
     setScraping(true);
     try {
-      toast.info("Scraping YouTube channels...");
+      toast.info(force
+        ? "Force refreshing all YouTube channels..."
+        : "Updating YouTube data (skipping recently scraped channels)..."
+      );
 
       const res = await fetch("/api/jobs/youtube-scrape", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ brand_id: selectedBrandId }),
+        body: JSON.stringify({ brand_id: selectedBrandId, force }),
         signal: AbortSignal.timeout(290000),
       });
 
@@ -708,17 +711,27 @@ export default function YouTubeIntelligencePage() {
               {selectedBrand ? ` for ${selectedBrand.name}` : ""}
             </p>
           </div>
-          <Button
-            onClick={handleRefresh}
-            disabled={scraping || !selectedBrandId}
-          >
-            {scraping ? (
-              <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-            ) : (
-              <RefreshCw className="mr-2 h-4 w-4" />
-            )}
-            Refresh YouTube Data
-          </Button>
+          <div className="flex gap-2">
+            <Button
+              onClick={() => handleRefresh(false)}
+              disabled={scraping || !selectedBrandId}
+            >
+              {scraping ? (
+                <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+              ) : (
+                <RefreshCw className="mr-2 h-4 w-4" />
+              )}
+              Update
+            </Button>
+            <Button
+              onClick={() => handleRefresh(true)}
+              disabled={scraping || !selectedBrandId}
+              variant="outline"
+              title="Re-scrape all channels, even recently scraped ones"
+            >
+              Force Refresh
+            </Button>
+          </div>
         </div>
 
         <Card>
@@ -777,17 +790,26 @@ export default function YouTubeIntelligencePage() {
               ))}
             </SelectContent>
           </Select>
-          <Button
-            onClick={handleRefresh}
-            disabled={scraping || !selectedBrandId}
-          >
-            {scraping ? (
-              <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-            ) : (
-              <RefreshCw className="mr-2 h-4 w-4" />
-            )}
-            Refresh
-          </Button>
+          <div className="flex gap-2">
+            <Button
+              onClick={() => handleRefresh(false)}
+              disabled={scraping || !selectedBrandId}
+            >
+              {scraping ? (
+                <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+              ) : (
+                <RefreshCw className="mr-2 h-4 w-4" />
+              )}
+              Update
+            </Button>
+            <Button
+              onClick={() => handleRefresh(true)}
+              disabled={scraping || !selectedBrandId}
+              variant="outline"
+            >
+              Force Refresh
+            </Button>
+          </div>
         </div>
       </div>
 

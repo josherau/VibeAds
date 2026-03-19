@@ -316,6 +316,9 @@ export async function POST(request: Request) {
       );
     }
 
+    const force = body.force === true;
+    const YOUTUBE_COOLDOWN_HOURS = 24;
+
     // 5. Fetch all active competitors with youtube_url
     const { data: competitors, error: compError } = await supabase
       .from("competitors")
@@ -328,9 +331,32 @@ export async function POST(request: Request) {
       throw compError;
     }
 
-    const ytCompetitors = (competitors ?? []).filter(
+    let ytCompetitors = (competitors ?? []).filter(
       (c: any) => c.youtube_url
     );
+
+    // Skip recently scraped competitors (unless force=true)
+    if (!force && ytCompetitors.length > 0) {
+      const cooldownCutoff = new Date(Date.now() - YOUTUBE_COOLDOWN_HOURS * 60 * 60 * 1000).toISOString();
+      const compIds = ytCompetitors.map((c: any) => c.id);
+
+      // Check youtube_channels.last_scraped_at for each competitor
+      const { data: recentChannels } = await supabase
+        .from("youtube_channels")
+        .select("competitor_id, last_scraped_at")
+        .in("competitor_id", compIds)
+        .gte("last_scraped_at", cooldownCutoff);
+
+      if (recentChannels && recentChannels.length > 0) {
+        const recentlyScrapedIds = new Set(recentChannels.map((ch: any) => ch.competitor_id));
+        const before = ytCompetitors.length;
+        ytCompetitors = ytCompetitors.filter((c: any) => !recentlyScrapedIds.has(c.id));
+        const skipped = before - ytCompetitors.length;
+        if (skipped > 0) {
+          console.log(`[YouTube Scrape] Skipped ${skipped} competitors scraped within last ${YOUTUBE_COOLDOWN_HOURS}h (use force=true to override)`);
+        }
+      }
+    }
 
     if (ytCompetitors.length === 0) {
       await supabase

@@ -269,19 +269,22 @@ export default function LandingPageIntelligencePage() {
     }
   }, [fetchData, brandLoading, selectedBrandId]);
 
-  async function handleRefresh() {
+  async function handleRefresh(force = false) {
     if (!selectedBrandId) {
       toast.error("Please select a business first");
       return;
     }
     setScraping(true);
     try {
-      toast.info("Scraping competitor landing pages...");
+      toast.info(force
+        ? "Force refreshing all competitor landing pages..."
+        : "Updating landing pages (skipping recently scraped competitors)..."
+      );
 
       const res = await fetch("/api/jobs/landing-scrape", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ brand_id: selectedBrandId }),
+        body: JSON.stringify({ brand_id: selectedBrandId, force }),
         signal: AbortSignal.timeout(290000),
       });
 
@@ -439,17 +442,27 @@ export default function LandingPageIntelligencePage() {
               {selectedBrand ? ` for ${selectedBrand.name}` : ""}
             </p>
           </div>
-          <Button
-            onClick={handleRefresh}
-            disabled={scraping || !selectedBrandId}
-          >
-            {scraping ? (
-              <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-            ) : (
-              <RefreshCw className="mr-2 h-4 w-4" />
-            )}
-            Scrape Landing Pages
-          </Button>
+          <div className="flex gap-2">
+            <Button
+              onClick={() => handleRefresh(false)}
+              disabled={scraping || !selectedBrandId}
+            >
+              {scraping ? (
+                <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+              ) : (
+                <RefreshCw className="mr-2 h-4 w-4" />
+              )}
+              Update
+            </Button>
+            <Button
+              onClick={() => handleRefresh(true)}
+              disabled={scraping || !selectedBrandId}
+              variant="outline"
+              title="Re-scrape all competitors, even recently scraped ones"
+            >
+              Force Refresh
+            </Button>
+          </div>
         </div>
 
         <Card>
@@ -496,17 +509,26 @@ export default function LandingPageIntelligencePage() {
             {selectedBrand ? ` for ${selectedBrand.name}` : ""}
           </p>
         </div>
-        <Button
-          onClick={handleRefresh}
-          disabled={scraping || !selectedBrandId}
-        >
-          {scraping ? (
-            <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-          ) : (
-            <RefreshCw className="mr-2 h-4 w-4" />
-          )}
-          Refresh
-        </Button>
+        <div className="flex gap-2">
+          <Button
+            onClick={() => handleRefresh(false)}
+            disabled={scraping || !selectedBrandId}
+          >
+            {scraping ? (
+              <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+            ) : (
+              <RefreshCw className="mr-2 h-4 w-4" />
+            )}
+            Update
+          </Button>
+          <Button
+            onClick={() => handleRefresh(true)}
+            disabled={scraping || !selectedBrandId}
+            variant="outline"
+          >
+            Force Refresh
+          </Button>
+        </div>
       </div>
 
       {/* Stats overview */}

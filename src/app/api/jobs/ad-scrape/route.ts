@@ -331,8 +331,11 @@ export async function POST(request: Request) {
       );
     }
 
+    const force = body.force === true;
+    const AD_COOLDOWN_HOURS = 24;
+
     // 5. Fetch all active competitors
-    const { data: competitors, error: compError } = await supabase
+    const { data: allCompetitors, error: compError } = await supabase
       .from("competitors")
       .select("*")
       .eq("brand_id", brandId)
@@ -343,7 +346,10 @@ export async function POST(request: Request) {
       throw compError;
     }
 
-    if (!competitors || competitors.length === 0) {
+    // Mutable array we'll filter for freshness
+    const competitors: any[] = allCompetitors ? [...allCompetitors] : [];
+
+    if (competitors.length === 0) {
       await supabase
         .from("pipeline_runs")
         .update({
@@ -367,6 +373,33 @@ export async function POST(request: Request) {
     console.log(
       `[Ad Scrape] Found ${competitors.length} active competitors`
     );
+
+    // 5a. Skip recently scraped competitors (unless force=true)
+    let skippedCount = 0;
+    if (!force && competitors.length > 0) {
+      const cooldownCutoff = new Date(Date.now() - AD_COOLDOWN_HOURS * 60 * 60 * 1000).toISOString();
+      const compIds = competitors.map((c: any) => c.id);
+
+      // Check most recent ad scrape per competitor
+      const { data: recentAds } = await supabase
+        .from("competitor_ads")
+        .select("competitor_id, created_at")
+        .in("competitor_id", compIds)
+        .gte("created_at", cooldownCutoff)
+        .order("created_at", { ascending: false });
+
+      if (recentAds && recentAds.length > 0) {
+        const recentlyScrapedIds = new Set(recentAds.map((a: any) => a.competitor_id));
+        const before = competitors.length;
+        const filtered = competitors.filter((c: any) => !recentlyScrapedIds.has(c.id));
+        skippedCount = before - filtered.length;
+        competitors.length = 0;
+        competitors.push(...filtered);
+        if (skippedCount > 0) {
+          console.log(`[Ad Scrape] Skipped ${skippedCount} competitors scraped within last ${AD_COOLDOWN_HOURS}h (use force=true to override)`);
+        }
+      }
+    }
 
     // 5b. Auto-discover missing Meta Page IDs before scraping
     const missingMetaPageIds = competitors.filter(
@@ -615,6 +648,7 @@ ${JSON.stringify(adSummaries, null, 2).slice(0, 14000)}`,
       google_ads_found: totalGoogleAds,
       total_ads: totalAds,
       competitors_processed: competitors.length,
+      competitors_skipped: skippedCount,
       competitors_with_meta_page_id: competitors.filter((c: any) => c.meta_page_id).length,
       meta_page_ids_auto_discovered: missingMetaPageIds.length > 0
         ? competitors.filter((c: any) => c.meta_page_id).length - (competitors.length - missingMetaPageIds.length)

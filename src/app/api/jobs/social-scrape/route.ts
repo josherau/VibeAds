@@ -360,6 +360,9 @@ export async function POST(request: Request) {
       );
     }
 
+    const force = body.force === true;
+    const SOCIAL_COOLDOWN_HOURS = 12;
+
     // 5. Fetch all active competitors
     const { data: competitors, error: compError } = await supabase
       .from("competitors")
@@ -442,10 +445,35 @@ export async function POST(request: Request) {
     }
 
     // 5c. Filter to competitors that now have social handles
-    const socialCompetitors = competitors
+    let socialCompetitors = competitors
       .filter((c: any) => c.instagram_handle || c.twitter_handle || c.linkedin_url);
 
     console.log(`[Social Scrape] ${socialCompetitors.length} competitors have social handles: ${socialCompetitors.map((c: any) => `${c.name} (IG:${c.instagram_handle || 'none'} TW:${c.twitter_handle || 'none'})`).join(', ')}`);
+
+    // 5d. Skip recently scraped competitors (unless force=true)
+    if (!force && socialCompetitors.length > 0) {
+      const cooldownCutoff = new Date(Date.now() - SOCIAL_COOLDOWN_HOURS * 60 * 60 * 1000).toISOString();
+      const compIds = socialCompetitors.map((c: any) => c.id);
+
+      // Check most recent social post per competitor
+      const { data: recentPosts } = await supabase
+        .from("competitor_content")
+        .select("competitor_id, created_at")
+        .in("competitor_id", compIds)
+        .eq("content_type", "social_post")
+        .gte("created_at", cooldownCutoff)
+        .order("created_at", { ascending: false });
+
+      if (recentPosts && recentPosts.length > 0) {
+        const recentlyScrapedIds = new Set(recentPosts.map((p: any) => p.competitor_id));
+        const before = socialCompetitors.length;
+        socialCompetitors = socialCompetitors.filter((c: any) => !recentlyScrapedIds.has(c.id));
+        const skipped = before - socialCompetitors.length;
+        if (skipped > 0) {
+          console.log(`[Social Scrape] Skipped ${skipped} competitors scraped within last ${SOCIAL_COOLDOWN_HOURS}h (use force=true to override)`);
+        }
+      }
+    }
 
     if (socialCompetitors.length === 0) {
       await supabase

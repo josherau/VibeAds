@@ -279,16 +279,19 @@ export default function AdIntelligencePage() {
 
   // ── Refresh handler ──────────────────────────────────────────
 
-  const handleRefresh = useCallback(async () => {
+  const handleRefresh = useCallback(async (force = false) => {
     if (!brandId || refreshing) return;
     setRefreshing(true);
-    toast.info("Starting ad scrape... This may take a few minutes.");
+    toast.info(force
+      ? "Force refreshing all competitor ads..."
+      : "Updating ads (skipping recently scraped competitors)..."
+    );
 
     try {
       const res = await fetch("/api/jobs/ad-scrape", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ brand_id: brandId }),
+        body: JSON.stringify({ brand_id: brandId, force }),
       });
 
       const data = await res.json();
@@ -297,8 +300,11 @@ export default function AdIntelligencePage() {
         throw new Error(data.error || "Ad scrape failed");
       }
 
+      const skippedMsg = data.competitors_skipped
+        ? ` (${data.competitors_skipped} skipped — recently scraped)`
+        : "";
       toast.success(
-        `Ad scrape complete! Found ${data.total_ads ?? 0} ads across ${data.competitors_processed ?? 0} competitors.`
+        `Ad scrape complete! Found ${data.total_ads ?? 0} ads across ${data.competitors_processed ?? 0} competitors.${skippedMsg}`
       );
       await fetchData();
     } catch (err) {
@@ -401,7 +407,7 @@ export default function AdIntelligencePage() {
             </SelectContent>
           </Select>
           <Button
-            onClick={handleRefresh}
+            onClick={() => handleRefresh(false)}
             disabled={refreshing}
             size="sm"
             className="gap-2"
@@ -411,7 +417,17 @@ export default function AdIntelligencePage() {
             ) : (
               <RefreshCw className="h-4 w-4" />
             )}
-            {refreshing ? "Scraping..." : "Refresh"}
+            {refreshing ? "Scraping..." : "Update"}
+          </Button>
+          <Button
+            onClick={() => handleRefresh(true)}
+            disabled={refreshing}
+            size="sm"
+            variant="outline"
+            className="gap-2"
+            title="Re-scrape all competitors, even recently scraped ones"
+          >
+            Force Refresh
           </Button>
         </div>
       </div>
@@ -487,7 +503,7 @@ export default function AdIntelligencePage() {
               Library and Google Ads Transparency. Meta Page IDs will be
               automatically discovered for your competitors.
             </p>
-            <Button onClick={handleRefresh} disabled={refreshing} className="gap-2">
+            <Button onClick={() => handleRefresh(false)} disabled={refreshing} className="gap-2">
               {refreshing ? (
                 <Loader2 className="h-4 w-4 animate-spin" />
               ) : (

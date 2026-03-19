@@ -266,8 +266,11 @@ export async function POST(request: Request) {
     const runId = run.id;
     const startTime = Date.now();
 
+    const force = body.force === true;
+    const LANDING_COOLDOWN_HOURS = 72;
+
     // 6. Fetch all active competitors with website_url
-    const { data: competitors, error: compError } = await supabase
+    const { data: allCompetitors, error: compError } = await supabase
       .from("competitors")
       .select("*")
       .eq("brand_id", brandId)
@@ -279,7 +282,9 @@ export async function POST(request: Request) {
       throw compError;
     }
 
-    if (!competitors || competitors.length === 0) {
+    let competitors = allCompetitors ? [...allCompetitors] : [];
+
+    if (competitors.length === 0) {
       await supabase
         .from("pipeline_runs")
         .update({
@@ -302,6 +307,31 @@ export async function POST(request: Request) {
     console.log(
       `[Landing Scrape] Found ${competitors.length} competitors with website URLs for brand ${brandId}`
     );
+
+    // Skip recently scraped competitors (unless force=true)
+    if (!force && competitors.length > 0) {
+      const cooldownCutoff = new Date(Date.now() - LANDING_COOLDOWN_HOURS * 60 * 60 * 1000).toISOString();
+      const compIds = competitors.map((c: any) => c.id);
+
+      // Check most recent landing page scrape per competitor
+      const { data: recentPages } = await supabase
+        .from("competitor_content")
+        .select("competitor_id, created_at")
+        .in("competitor_id", compIds)
+        .eq("content_type", "landing_page")
+        .gte("created_at", cooldownCutoff)
+        .order("created_at", { ascending: false });
+
+      if (recentPages && recentPages.length > 0) {
+        const recentlyScrapedIds = new Set(recentPages.map((p: any) => p.competitor_id));
+        const before = competitors.length;
+        competitors = competitors.filter((c: any) => !recentlyScrapedIds.has(c.id));
+        const skipped = before - competitors.length;
+        if (skipped > 0) {
+          console.log(`[Landing Scrape] Skipped ${skipped} competitors scraped within last ${LANDING_COOLDOWN_HOURS}h (use force=true to override)`);
+        }
+      }
+    }
 
     let totalPagesScraped = 0;
     const errors: string[] = [];
