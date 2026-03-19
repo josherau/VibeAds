@@ -70,6 +70,7 @@ const navGroups: NavGroup[] = [
     items: [
       { href: "/competitors", label: "Competitors", icon: Users },
       { href: "/intelligence", label: "Ad Intel", icon: Search },
+      { href: "/intelligence/ads", label: "Ad Intelligence", icon: Megaphone },
       { href: "/intelligence/social", label: "Social Intel", icon: MessageCircle },
       { href: "/intelligence/youtube", label: "YouTube Intel", icon: Youtube },
       { href: "/intelligence/landing", label: "Landing Pages", icon: FileText },
