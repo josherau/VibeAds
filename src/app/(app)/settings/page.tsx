@@ -14,7 +14,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Separator } from "@/components/ui/separator";
-import { Loader2, Save, Eye, EyeOff, Key } from "lucide-react";
+import { Loader2, Save, Eye, EyeOff, Key, Mail, Send } from "lucide-react";
 import { toast } from "sonner";
 import { useBrand } from "@/lib/brand-context";
 import type { Database } from "@/lib/supabase/types";
@@ -90,6 +90,13 @@ export default function SettingsPage() {
   const [emailNotifications, setEmailNotifications] = useState(true);
   const [notificationEmail, setNotificationEmail] = useState("");
 
+  // Digest settings
+  const [digestEnabled, setDigestEnabled] = useState(false);
+  const [digestEmail, setDigestEmail] = useState("");
+  const [digestFrequency, setDigestFrequency] = useState("weekly");
+  const [digestDay, setDigestDay] = useState("monday");
+  const [sendingTestDigest, setSendingTestDigest] = useState(false);
+
   const fetchSettings = useCallback(async () => {
     if (!selectedBrandId) {
       setBrand(null);
@@ -126,12 +133,17 @@ export default function SettingsPage() {
           accent_color: brandData.accent_color ?? "#8b5cf6",
         });
       }
+      // Pre-fill digest email from auth user
+      const { data: { user: authUser } } = await supabase.auth.getUser();
+      if (authUser?.email && !digestEmail) {
+        setDigestEmail(authUser.email);
+      }
     } catch {
       // No brand yet
     } finally {
       setLoading(false);
     }
-  }, [supabase, selectedBrandId]);
+  }, [supabase, selectedBrandId, digestEmail]);
 
   useEffect(() => {
     if (!brandLoading) {
@@ -185,6 +197,30 @@ export default function SettingsPage() {
       );
     } finally {
       setSaving(false);
+    }
+  }
+
+  async function sendTestDigest() {
+    if (!selectedBrandId) {
+      toast.error("Please select a brand first");
+      return;
+    }
+    setSendingTestDigest(true);
+    try {
+      const res = await fetch("/api/jobs/email-digest", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ brand_id: selectedBrandId, test: true }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "Failed to send test digest");
+      toast.success(`Test digest sent to ${data.sentTo}`);
+    } catch (err) {
+      toast.error(
+        err instanceof Error ? err.message : "Failed to send test digest"
+      );
+    } finally {
+      setSendingTestDigest(false);
     }
   }
 
@@ -446,6 +482,122 @@ export default function SettingsPage() {
           </Button>
         </div>
       </form>
+
+      {/* Email Digest Settings - outside the main form */}
+      <Card>
+        <CardHeader>
+          <CardTitle className="flex items-center gap-2">
+            <Mail className="h-5 w-5" />
+            Email Digest
+          </CardTitle>
+          <CardDescription>
+            Receive automated intelligence digests with competitor insights and
+            AI recommendations delivered to your inbox
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-6">
+          <div className="flex items-center justify-between">
+            <div>
+              <p className="text-sm font-medium">Enable Email Digest</p>
+              <p className="text-xs text-muted-foreground">
+                Get regular intelligence reports via email
+              </p>
+            </div>
+            <button
+              type="button"
+              role="switch"
+              aria-checked={digestEnabled}
+              onClick={() => setDigestEnabled(!digestEnabled)}
+              className={`relative inline-flex h-6 w-11 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors ${
+                digestEnabled ? "bg-primary" : "bg-muted"
+              }`}
+            >
+              <span
+                className={`pointer-events-none inline-block h-5 w-5 transform rounded-full bg-background shadow-lg ring-0 transition-transform ${
+                  digestEnabled ? "translate-x-5" : "translate-x-0"
+                }`}
+              />
+            </button>
+          </div>
+
+          {digestEnabled && (
+            <>
+              <Separator />
+
+              <div className="space-y-2">
+                <Label htmlFor="digest-email">Digest Email Address</Label>
+                <Input
+                  id="digest-email"
+                  type="email"
+                  value={digestEmail}
+                  onChange={(e) => setDigestEmail(e.target.value)}
+                  placeholder="you@example.com"
+                />
+              </div>
+
+              <div className="grid gap-4 sm:grid-cols-2">
+                <div className="space-y-2">
+                  <Label htmlFor="digest-frequency">Frequency</Label>
+                  <select
+                    id="digest-frequency"
+                    value={digestFrequency}
+                    onChange={(e) => setDigestFrequency(e.target.value)}
+                    className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                  >
+                    <option value="daily">Daily</option>
+                    <option value="weekly">Weekly</option>
+                    <option value="monthly">Monthly</option>
+                  </select>
+                </div>
+
+                {digestFrequency === "weekly" && (
+                  <div className="space-y-2">
+                    <Label htmlFor="digest-day">Day of Week</Label>
+                    <select
+                      id="digest-day"
+                      value={digestDay}
+                      onChange={(e) => setDigestDay(e.target.value)}
+                      className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                    >
+                      <option value="monday">Monday</option>
+                      <option value="tuesday">Tuesday</option>
+                      <option value="wednesday">Wednesday</option>
+                      <option value="thursday">Thursday</option>
+                      <option value="friday">Friday</option>
+                      <option value="saturday">Saturday</option>
+                      <option value="sunday">Sunday</option>
+                    </select>
+                  </div>
+                )}
+              </div>
+
+              <Separator />
+
+              <div className="flex items-center justify-between">
+                <div>
+                  <p className="text-sm font-medium">Send Test Digest</p>
+                  <p className="text-xs text-muted-foreground">
+                    Send a test digest email to preview what you will receive
+                  </p>
+                </div>
+                <Button
+                  type="button"
+                  variant="outline"
+                  disabled={sendingTestDigest || !selectedBrandId}
+                  onClick={sendTestDigest}
+                >
+                  {sendingTestDigest ? (
+                    <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                  ) : (
+                    <Send className="mr-2 h-4 w-4" />
+                  )}
+                  Send Test
+                </Button>
+              </div>
+            </>
+          )}
+        </CardContent>
+      </Card>
     </div>
   );
 }
