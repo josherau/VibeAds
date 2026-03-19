@@ -14,10 +14,11 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Separator } from "@/components/ui/separator";
-import { Loader2, Save, Eye, EyeOff, Key, Mail, Send } from "lucide-react";
+import { Loader2, Save, Eye, EyeOff, Key, Mail, Send, Users, ArrowRight } from "lucide-react";
 import { toast } from "sonner";
 import { useBrand } from "@/lib/brand-context";
 import type { Database } from "@/lib/supabase/types";
+import Link from "next/link";
 
 type Brand = Database["public"]["Tables"]["brands"]["Row"];
 
@@ -482,6 +483,28 @@ export default function SettingsPage() {
           </Button>
         </div>
       </form>
+
+      {/* Team & Organizations */}
+      <Card>
+        <CardHeader>
+          <CardTitle className="flex items-center gap-2">
+            <Users className="h-5 w-5" />
+            Team & Organizations
+          </CardTitle>
+          <CardDescription>
+            Invite team members, manage organizations, and control brand access
+            permissions
+          </CardDescription>
+        </CardHeader>
+        <CardContent>
+          <Link href="/settings/team">
+            <Button variant="outline" className="w-full sm:w-auto">
+              Manage Team
+              <ArrowRight className="ml-2 h-4 w-4" />
+            </Button>
+          </Link>
+        </CardContent>
+      </Card>
 
       {/* Email Digest Settings - outside the main form */}
       <Card>

@@ -99,6 +99,7 @@ const navGroups: NavGroup[] = [
     label: "Settings",
     items: [
       { href: "/settings", label: "Settings", icon: Settings },
+      { href: "/settings/team", label: "Team", icon: Users },
     ],
   },
 ];
