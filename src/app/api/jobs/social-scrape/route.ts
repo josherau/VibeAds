@@ -553,13 +553,19 @@ export async function POST(request: Request) {
     }
 
     // --- Twitter batch ---
+    // NOTE: Twitter scraping on Apify requires a paid plan.
+    // The free tier returns { noResults: true } for all queries.
+    // We use searchTerms with "from:handle" syntax which is the supported input format.
     if (twHandles.length > 0) {
       scrapePromises.push((async () => {
         try {
+          // Build search queries for each handle using Twitter advanced search syntax
+          const searchTerms = twHandles.map(h => `from:${h}`);
+
           const results = await runApifyActorSync(
             "apidojo~tweet-scraper",
             {
-              twitterHandles: twHandles,
+              searchTerms,
               maxItems: 10 * twHandles.length,
               sort: "Latest",
             },
@@ -569,9 +575,19 @@ export async function POST(request: Request) {
 
           console.log(`[Social Scrape] Twitter batch returned ${results.length} items, first keys: ${JSON.stringify(Object.keys(results[0] || {})).slice(0, 300)}`);
 
+          // Filter out noResults/demo items (free plan limitation)
+          const validResults = results.filter(
+            (item: any) => !item.noResults && !item.demo
+          );
+
+          if (validResults.length === 0 && results.length > 0) {
+            console.warn(`[Social Scrape] Twitter scraper returned only noResults/demo items — likely requires a paid Apify plan`);
+            errors.push("Twitter scraping requires a paid Apify plan. Upgrade at apify.com to enable Twitter/X data.");
+          }
+
           // Flatten tweets
           const tweets: any[] = [];
-          for (const item of results) {
+          for (const item of validResults) {
             if (item.tweets && Array.isArray(item.tweets)) {
               tweets.push(...item.tweets);
             } else if (item.text || item.full_text || item.tweet) {
@@ -733,6 +749,11 @@ ${JSON.stringify(postSummaries, null, 2).slice(0, 12000)}`
       .eq("id", runId);
 
     // 10. Return success with detailed info
+    const warnings: string[] = [];
+    if (twitterCount === 0 && twHandles.length > 0) {
+      warnings.push("Twitter/X scraping requires a paid Apify plan. Only Instagram data was collected.");
+    }
+
     return NextResponse.json({
       success: true,
       run_id: runId,
@@ -741,6 +762,7 @@ ${JSON.stringify(postSummaries, null, 2).slice(0, 12000)}`
       total_posts: totalPosts,
       competitors_processed: socialCompetitors.length,
       errors: errors.length > 0 ? errors : undefined,
+      warnings: warnings.length > 0 ? warnings : undefined,
       analysis: analysisResult ? "completed" : "skipped",
     });
   } catch (err) {

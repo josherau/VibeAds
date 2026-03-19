@@ -295,11 +295,18 @@ export default function SocialIntelligencePage() {
 
       const totalPosts = data.total_posts ?? data.posts_found ?? 0;
       if (totalPosts > 0) {
-        toast.success(`Social scrape complete! Found ${totalPosts} posts.`);
+        toast.success(`Social scrape complete! Found ${totalPosts} posts (${data.instagram_posts ?? 0} IG, ${data.twitter_posts ?? 0} TW).`);
       } else if (data.message) {
         toast.warning(data.message);
       } else {
         toast.warning("Social scrape complete but no posts were found. Make sure competitors have Instagram or Twitter handles.");
+      }
+
+      // Show warnings (e.g. Twitter requires paid plan)
+      if (data.warnings && Array.isArray(data.warnings)) {
+        for (const w of data.warnings) {
+          toast.info(w, { duration: 8000 });
+        }
       }
       fetchData();
     } catch (err) {
