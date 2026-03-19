@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { useState } from "react";
+import { useState, useEffect, useMemo } from "react";
 import {
   LayoutDashboard,
   Users,
@@ -26,6 +26,7 @@ import {
   Megaphone,
   BarChart3,
   DollarSign,
+  Shield,
 } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 import { cn } from "@/lib/utils";
@@ -44,6 +45,7 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { useBrand } from "@/lib/brand-context";
+import { createClient } from "@/lib/supabase/client";
 
 interface NavItem {
   href: string;
@@ -170,8 +172,44 @@ function BrandSelector() {
   );
 }
 
+const adminNavGroup: NavGroup = {
+  label: "Admin",
+  items: [
+    { href: "/admin", label: "Admin Panel", icon: Shield },
+  ],
+};
+
 function NavContent({ onNavigate }: { onNavigate?: () => void }) {
   const pathname = usePathname();
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  const supabase = useMemo(() => createClient(), []);
+  const [isSuperAdmin, setIsSuperAdmin] = useState(false);
+
+  useEffect(() => {
+    async function checkAdmin() {
+      const {
+        data: { user },
+      } = await supabase.auth.getUser();
+      if (!user) return;
+
+      // user_roles table may not be in generated types; use untyped query
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const { data } = await (supabase as any)
+        .from("user_roles")
+        .select("is_super_admin")
+        .eq("user_id", user.id)
+        .single();
+
+      if (data?.is_super_admin) {
+        setIsSuperAdmin(true);
+      }
+    }
+    checkAdmin();
+  }, [supabase]);
+
+  const allNavGroups = isSuperAdmin
+    ? [...navGroups, adminNavGroup]
+    : navGroups;
 
   return (
     <div className="flex h-full flex-col">
@@ -188,7 +226,7 @@ function NavContent({ onNavigate }: { onNavigate?: () => void }) {
       </div>
 
       <nav className="flex-1 overflow-y-auto px-3 pb-2">
-        {navGroups.map((group) => (
+        {allNavGroups.map((group) => (
           <div key={group.label} className="mb-3">
             <p className="mb-1 px-3 pt-3 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground/60">
               {group.label}
