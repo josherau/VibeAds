@@ -377,9 +377,27 @@ export async function POST(request: Request) {
         let channelData: any = null;
         let videoData: any[] = [];
 
-        // Try Apify first
-        if (apifyToken) {
+        // Try YouTube Data API first (free, reliable)
+        if (youtubeApiKey) {
+          console.log(
+            `[YouTube Scrape] Using YouTube API for ${comp.name} (${channelIdentifier})`
+          );
+          const apiResult = await scrapeWithYouTubeApi(
+            channelIdentifier,
+            youtubeApiKey
+          );
+          if (apiResult) {
+            channelData = apiResult.channel;
+            videoData = apiResult.videos;
+          }
+        }
+
+        // Fallback to Apify if YouTube API didn't work
+        if (!channelData && apifyToken) {
           try {
+            console.log(
+              `[YouTube Scrape] Falling back to Apify for ${comp.name}`
+            );
             const channelUrl = comp.youtube_url.startsWith("http")
               ? comp.youtube_url
               : `https://www.youtube.com/${channelIdentifier}`;
@@ -396,8 +414,6 @@ export async function POST(request: Request) {
             );
 
             if (results.length > 0) {
-              // The scraper may return channel info + videos
-              // Look for channel-level data
               const channelResult = results.find(
                 (r: any) => r.channelName || r.channelTitle || r.subscriberCountText
               );
@@ -436,9 +452,7 @@ export async function POST(request: Request) {
                 };
               }
 
-              // Extract videos
               for (const item of results) {
-                // Items could be videos directly
                 if (item.title && (item.videoId || item.id || item.url)) {
                   videoData.push({
                     videoId:
@@ -464,7 +478,6 @@ export async function POST(request: Request) {
                   });
                 }
 
-                // Or have nested videos
                 if (item.videos && Array.isArray(item.videos)) {
                   for (const v of item.videos) {
                     videoData.push({
@@ -488,7 +501,6 @@ export async function POST(request: Request) {
                 }
               }
 
-              // If no channel data extracted but we have videos, create channel from first result
               if (!channelData && videoData.length > 0) {
                 const first = results[0];
                 channelData = {
@@ -508,22 +520,6 @@ export async function POST(request: Request) {
               `[YouTube Scrape] Apify error for ${comp.name}:`,
               msg
             );
-            // Fall through to YouTube API
-          }
-        }
-
-        // Fallback to YouTube Data API
-        if (!channelData && youtubeApiKey) {
-          console.log(
-            `[YouTube Scrape] Falling back to YouTube API for ${comp.name}`
-          );
-          const apiResult = await scrapeWithYouTubeApi(
-            channelIdentifier,
-            youtubeApiKey
-          );
-          if (apiResult) {
-            channelData = apiResult.channel;
-            videoData = apiResult.videos;
           }
         }
 
