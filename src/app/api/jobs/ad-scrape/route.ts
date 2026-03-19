@@ -81,16 +81,37 @@ async function runApifyActorSync(
 
 // ── Meta Ad Library ────────────────────────────────────────────────────
 
+/**
+ * Scrape Meta ads for a competitor.
+ * Supports three modes:
+ * 1. Numeric page ID → search_page_ids (most precise)
+ * 2. Facebook URL in meta_page_id → extract page name → search_terms
+ * 3. No meta_page_id → search_terms with company name (broadest)
+ */
 async function scrapeMetaAds(
   competitor: any,
   metaAccessToken: string,
   supabase: ReturnType<typeof createServiceRoleClient>,
   brandId: string
 ): Promise<number> {
-  if (!competitor.meta_page_id) return 0;
+  const metaPageId = competitor.meta_page_id;
+
+  // Determine search strategy
+  let searchMode: "page_id" | "search_terms";
+  let searchValue: string;
+
+  if (metaPageId && /^\d+$/.test(metaPageId)) {
+    // Pure numeric page ID — use search_page_ids (most precise)
+    searchMode = "page_id";
+    searchValue = metaPageId;
+  } else {
+    // No numeric ID — use search_terms with company name
+    searchMode = "search_terms";
+    searchValue = competitor.name;
+  }
 
   console.log(
-    `[Ad Scrape] Fetching Meta ads for ${competitor.name} (page: ${competitor.meta_page_id})`
+    `[Ad Scrape] Fetching Meta ads for ${competitor.name} (${searchMode}: ${searchValue})`
   );
 
   let totalAds = 0;
@@ -98,13 +119,18 @@ async function scrapeMetaAds(
 
   do {
     const params = new URLSearchParams({
-      search_page_ids: competitor.meta_page_id,
       ad_reached_countries: '["US"]',
       fields:
-        "ad_creative_bodies,ad_creative_link_titles,ad_creative_link_descriptions,ad_creative_link_captions,ad_snapshot_url,ad_delivery_start_time,ad_delivery_stop_time,publisher_platforms,page_name",
+        "ad_creative_bodies,ad_creative_link_titles,ad_creative_link_descriptions,ad_creative_link_captions,ad_snapshot_url,ad_delivery_start_time,ad_delivery_stop_time,publisher_platforms,page_id,page_name",
       access_token: metaAccessToken,
       limit: "25",
     });
+
+    if (searchMode === "page_id") {
+      params.set("search_page_ids", searchValue);
+    } else {
+      params.set("search_terms", searchValue);
+    }
 
     if (nextCursor) {
       params.set("after", nextCursor);
@@ -126,10 +152,22 @@ async function scrapeMetaAds(
     const data = await response.json();
     const ads = data.data ?? [];
 
+    // If using search_terms, try to auto-save the page_id from results
+    if (searchMode === "search_terms" && ads.length > 0 && !competitor.meta_page_id) {
+      const firstPageId = ads[0].page_id;
+      if (firstPageId) {
+        console.log(`[Ad Scrape] Auto-discovered Meta page_id for ${competitor.name}: ${firstPageId}`);
+        await supabase
+          .from("competitors")
+          .update({ meta_page_id: String(firstPageId) })
+          .eq("id", competitor.id);
+      }
+    }
+
     for (const ad of ads) {
       const isActive = !ad.ad_delivery_stop_time;
       const externalId =
-        ad.ad_snapshot_url ?? `meta_${competitor.meta_page_id}_${totalAds}`;
+        ad.ad_snapshot_url ?? `meta_${competitor.id}_${totalAds}`;
 
       const adRecord = {
         competitor_id: competitor.id,
@@ -162,6 +200,9 @@ async function scrapeMetaAds(
     nextCursor = data.paging?.cursors?.after ?? null;
     const hasNextPage = data.paging?.next != null;
     if (!hasNextPage) nextCursor = null;
+
+    // For search_terms mode, only fetch 1 page to avoid pulling irrelevant ads
+    if (searchMode === "search_terms") nextCursor = null;
   } while (nextCursor);
 
   console.log(
@@ -401,61 +442,14 @@ export async function POST(request: Request) {
       }
     }
 
-    // 5b. Auto-discover missing Meta Page IDs before scraping
+    // 5b. Track competitors without numeric page IDs for reporting
     const missingMetaPageIds = competitors.filter(
-      (c: any) => !c.meta_page_id
+      (c: any) => !c.meta_page_id || !/^\d+$/.test(c.meta_page_id)
     );
-    if (missingMetaPageIds.length > 0 && (metaAccessToken || process.env.APIFY_API_TOKEN)) {
+    if (missingMetaPageIds.length > 0) {
       console.log(
-        `[Ad Scrape] ${missingMetaPageIds.length} competitors missing Meta Page IDs — auto-discovering...`
+        `[Ad Scrape] ${missingMetaPageIds.length} competitors without numeric Meta Page IDs — will use search_terms fallback`
       );
-
-      try {
-        const enrichRes = await fetch(
-          new URL("/api/competitors/enrich", request.url).toString(),
-          {
-            method: "POST",
-            headers: {
-              "Content-Type": "application/json",
-              cookie: request.headers.get("cookie") || "",
-            },
-            body: JSON.stringify({
-              brand_id: brandId,
-              mode: "meta_page_id_only",
-            }),
-            signal: AbortSignal.timeout(90000),
-          }
-        );
-
-        if (enrichRes.ok) {
-          const enrichData = await enrichRes.json();
-          const discovered = (enrichData.results || []).filter(
-            (r: any) => r.found?.meta_page_id
-          );
-          console.log(
-            `[Ad Scrape] Auto-discovered ${discovered.length}/${missingMetaPageIds.length} Meta Page IDs`
-          );
-
-          // Refresh competitor data after enrichment
-          if (discovered.length > 0) {
-            const { data: refreshed } = await supabase
-              .from("competitors")
-              .select("*")
-              .eq("brand_id", brandId)
-              .eq("is_active", true)
-              .limit(20);
-            if (refreshed) {
-              competitors.length = 0;
-              competitors.push(...refreshed);
-            }
-          }
-        }
-      } catch (enrichErr) {
-        console.error(
-          "[Ad Scrape] Auto-discovery failed (non-blocking):",
-          enrichErr
-        );
-      }
     }
 
     let totalMetaAds = 0;
@@ -465,8 +459,8 @@ export async function POST(request: Request) {
     // 6. Scrape ads from each source
     const scrapePromises = competitors.map(async (comp: any) => {
       try {
-        // Meta Ad Library
-        if (metaAccessToken && comp.meta_page_id) {
+        // Meta Ad Library — works with page_id OR search_terms (company name)
+        if (metaAccessToken) {
           const metaCount = await scrapeMetaAds(
             comp,
             metaAccessToken,
@@ -649,10 +643,8 @@ ${JSON.stringify(adSummaries, null, 2).slice(0, 14000)}`,
       total_ads: totalAds,
       competitors_processed: competitors.length,
       competitors_skipped: skippedCount,
-      competitors_with_meta_page_id: competitors.filter((c: any) => c.meta_page_id).length,
-      meta_page_ids_auto_discovered: missingMetaPageIds.length > 0
-        ? competitors.filter((c: any) => c.meta_page_id).length - (competitors.length - missingMetaPageIds.length)
-        : 0,
+      competitors_with_numeric_page_id: competitors.filter((c: any) => c.meta_page_id && /^\d+$/.test(c.meta_page_id)).length,
+      competitors_using_name_search: missingMetaPageIds.length,
       errors: errors.length > 0 ? errors : undefined,
       analysis: analysisResult ? "completed" : "skipped",
     });
