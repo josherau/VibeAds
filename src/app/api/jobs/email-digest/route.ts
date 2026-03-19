@@ -303,10 +303,10 @@ Generate the email digest JSON now.`;
       digestDate,
     });
 
-    // 8. Send email via Resend
-    const resendApiKey = process.env.RESEND_API_KEY;
-    if (!resendApiKey) {
-      throw new Error("RESEND_API_KEY not configured");
+    // 8. Send email via SendGrid
+    const sendgridApiKey = process.env.SENDGRID_API_KEY;
+    if (!sendgridApiKey) {
+      throw new Error("SENDGRID_API_KEY not configured");
     }
 
     const userEmail = user.email;
@@ -315,26 +315,36 @@ Generate the email digest JSON now.`;
     }
 
     const subjectPrefix = test ? "[TEST] " : "";
-    const emailRes = await fetch("https://api.resend.com/emails", {
+    const emailRes = await fetch("https://api.sendgrid.com/v3/mail/send", {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
-        Authorization: `Bearer ${resendApiKey}`,
+        Authorization: `Bearer ${sendgridApiKey}`,
       },
       body: JSON.stringify({
-        from: "VibeAds <digest@vibeads.ai>",
-        to: [userEmail],
-        subject: `${subjectPrefix}Weekly Intelligence Digest - ${brand.name}`,
-        html: emailHtml,
+        personalizations: [
+          {
+            to: [{ email: userEmail }],
+            subject: `${subjectPrefix}Weekly Intelligence Digest - ${brand.name}`,
+          },
+        ],
+        from: { email: "digest@vibeads.ai", name: "VibeAds" },
+        content: [
+          {
+            type: "text/html",
+            value: emailHtml,
+          },
+        ],
       }),
     });
 
     if (!emailRes.ok) {
       const errBody = await emailRes.text();
-      throw new Error(`Resend API error (${emailRes.status}): ${errBody}`);
+      throw new Error(`SendGrid API error (${emailRes.status}): ${errBody}`);
     }
 
-    const emailResult = await emailRes.json();
+    // SendGrid returns 202 with empty body on success
+    const emailResult = { status: emailRes.status, accepted: true };
 
     // 9. Record the send in pipeline_runs
     await db.from("pipeline_runs").insert({
@@ -351,7 +361,7 @@ Generate the email digest JSON now.`;
 
     return NextResponse.json({
       success: true,
-      emailId: emailResult.id,
+      emailStatus: emailResult.status,
       sentTo: userEmail,
       test: test ?? false,
       digestSummary: digestData.executive_summary,
