@@ -60,6 +60,7 @@ const emptyForm = {
   instagram_handle: "",
   twitter_handle: "",
   linkedin_url: "",
+  youtube_url: "",
   notes: "",
 };
 
@@ -122,6 +123,7 @@ export default function CompetitorsPage() {
       instagram_handle: c.instagram_handle ?? "",
       twitter_handle: c.twitter_handle ?? "",
       linkedin_url: c.linkedin_url ?? "",
+      youtube_url: c.youtube_url ?? "",
       notes: c.notes ?? "",
     });
     setDialogOpen(true);
@@ -149,6 +151,7 @@ export default function CompetitorsPage() {
       instagram_handle: form.instagram_handle || null,
       twitter_handle: form.twitter_handle || null,
       linkedin_url: form.linkedin_url || null,
+      youtube_url: form.youtube_url || null,
       notes: form.notes || null,
     };
 
@@ -486,6 +489,15 @@ export default function CompetitorsPage() {
                 value={form.linkedin_url}
                 onChange={(e) => setForm({ ...form, linkedin_url: e.target.value })}
                 placeholder="https://linkedin.com/company/..."
+              />
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="youtube_url">YouTube Channel URL</Label>
+              <Input
+                id="youtube_url"
+                value={form.youtube_url}
+                onChange={(e) => setForm({ ...form, youtube_url: e.target.value })}
+                placeholder="https://youtube.com/@channel"
               />
             </div>
             <div className="space-y-2">

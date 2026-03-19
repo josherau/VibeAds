@@ -85,6 +85,7 @@ export async function POST(request: Request) {
         instagram_handle: body.instagram_handle || null,
         twitter_handle: body.twitter_handle || null,
         linkedin_url: body.linkedin_url || null,
+        youtube_url: body.youtube_url || null,
         notes: body.notes || null,
       })
       .select()

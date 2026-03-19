@@ -29,6 +29,7 @@ export async function PUT(
     if (body.twitter_handle !== undefined)
       updateData.twitter_handle = body.twitter_handle;
     if (body.linkedin_url !== undefined) updateData.linkedin_url = body.linkedin_url;
+    if (body.youtube_url !== undefined) updateData.youtube_url = body.youtube_url;
     if (body.notes !== undefined) updateData.notes = body.notes;
     if (body.is_active !== undefined) updateData.is_active = body.is_active;
 

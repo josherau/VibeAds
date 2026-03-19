@@ -98,6 +98,7 @@ export interface Database {
           instagram_handle: string | null;
           twitter_handle: string | null;
           linkedin_url: string | null;
+          youtube_url: string | null;
           notes: string | null;
           is_active: boolean;
           created_at: string;
@@ -113,6 +114,7 @@ export interface Database {
           instagram_handle?: string | null;
           twitter_handle?: string | null;
           linkedin_url?: string | null;
+          youtube_url?: string | null;
           notes?: string | null;
           is_active?: boolean;
           created_at?: string;
@@ -128,6 +130,7 @@ export interface Database {
           instagram_handle?: string | null;
           twitter_handle?: string | null;
           linkedin_url?: string | null;
+          youtube_url?: string | null;
           notes?: string | null;
           is_active?: boolean;
           created_at?: string;

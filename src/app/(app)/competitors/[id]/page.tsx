@@ -9,7 +9,7 @@ import {
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import {
-  ArrowLeft, Loader2, Globe, Instagram, Twitter, Linkedin,
+  ArrowLeft, Loader2, Globe, Instagram, Twitter, Linkedin, Youtube,
   Wand2, Shield, Swords, Target, Zap, AlertTriangle,
   TrendingUp, TrendingDown, Clock, DollarSign, Eye,
   MessageSquare, BarChart3, Megaphone, Lightbulb, CheckCircle2,
@@ -224,6 +224,12 @@ export default function CompetitorDetailPage() {
                 <span className="flex items-center gap-1">
                   <Linkedin className="h-3.5 w-3.5" /> LinkedIn
                 </span>
+              )}
+              {competitor.youtube_url && (
+                <a href={competitor.youtube_url} target="_blank" rel="noopener noreferrer"
+                   className="flex items-center gap-1 hover:text-foreground transition-colors">
+                  <Youtube className="h-3.5 w-3.5" /> YouTube
+                </a>
               )}
             </div>
           </div>
