@@ -34,7 +34,7 @@ export async function POST(request: Request) {
     // Fetch competitors
     const { data: competitors, error: fetchError } = await supabase
       .from("competitors")
-      .select("id, name, website_url, instagram_handle, twitter_handle, linkedin_url, meta_page_id")
+      .select("id, name, website_url, instagram_handle, twitter_handle, linkedin_url, youtube_url, meta_page_id")
       .in("id", competitorIds);
 
     if (fetchError || !competitors?.length) {
@@ -82,6 +82,9 @@ export async function POST(request: Request) {
         if (!competitor.linkedin_url && socialLinks.linkedin) {
           updates.linkedin_url = socialLinks.linkedin;
         }
+        if (!competitor.youtube_url && socialLinks.youtube) {
+          updates.youtube_url = socialLinks.youtube;
+        }
         if (!metaPageId && socialLinks.facebook) {
           // Store the Facebook URL in notes if we can't resolve the page ID
           updates.meta_page_id = metaPageId || null;
@@ -89,9 +92,8 @@ export async function POST(request: Request) {
           updates.meta_page_id = metaPageId;
         }
 
-        // Add YouTube and TikTok to notes if found
+        // Add TikTok and other extras to notes if found
         const extraSocials: string[] = [];
-        if (socialLinks.youtube) extraSocials.push(`YouTube: ${socialLinks.youtube}`);
         if (socialLinks.tiktok) extraSocials.push(`TikTok: ${socialLinks.tiktok}`);
         if (socialLinks.pinterest) extraSocials.push(`Pinterest: ${socialLinks.pinterest}`);
 
