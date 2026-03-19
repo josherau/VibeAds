@@ -516,7 +516,7 @@ export async function POST(request: Request) {
             {
               directUrls: igUrls,
               resultsType: "posts",
-              resultsLimit: 10,
+              resultsLimit: 25,
               searchType: "user",
             },
             apifyToken,
@@ -577,7 +577,7 @@ export async function POST(request: Request) {
             "apidojo~tweet-scraper",
             {
               searchTerms,
-              maxItems: 10 * twHandles.length,
+              maxItems: 25 * twHandles.length,
               sort: "Latest",
             },
             apifyToken,
@@ -682,7 +682,7 @@ export async function POST(request: Request) {
             "supreme_coder~linkedin-post",
             {
               urls: liUrls,
-              maxResults: 10 * liUrls.length,
+              maxResults: 25 * liUrls.length,
             },
             apifyToken,
             120
