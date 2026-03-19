@@ -557,9 +557,9 @@ export async function POST(request: Request) {
       scrapePromises.push((async () => {
         try {
           const results = await runApifyActorSync(
-            "apify~tweet-scraper-v2",
+            "apidojo~tweet-scraper",
             {
-              handles: twHandles,
+              twitterHandles: twHandles,
               maxItems: 10 * twHandles.length,
               sort: "Latest",
             },
