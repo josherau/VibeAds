@@ -72,6 +72,7 @@ const navGroups: NavGroup[] = [
       { href: "/intelligence", label: "Ad Intel", icon: Search },
       { href: "/intelligence/social", label: "Social Intel", icon: MessageCircle },
       { href: "/intelligence/youtube", label: "YouTube Intel", icon: Youtube },
+      { href: "/intelligence/landing", label: "Landing Pages", icon: FileText },
       { href: "/intelligence/seo", label: "SEO Intel", icon: Globe, comingSoon: true },
     ],
   },
