@@ -602,8 +602,16 @@ export async function POST(request: Request) {
             const authorHandle = (
               tweet.author?.userName ?? tweet.user?.screen_name ?? tweet.username ?? ""
             ).toLowerCase();
-            const competitor = twHandleMap.get(authorHandle);
-            if (!competitor) continue;
+            let competitor = twHandleMap.get(authorHandle);
+
+            // If no match by author, try matching by searchTerms context
+            if (!competitor && twHandles.length === 1) {
+              competitor = twHandleMap.get(twHandles[0]);
+            }
+            if (!competitor) {
+              console.log(`[Social Scrape] Could not match tweet author "${authorHandle}" to any competitor`);
+              continue;
+            }
 
             const extId = tweet.id ?? tweet.id_str ?? null;
             if (extId) {
@@ -618,7 +626,7 @@ export async function POST(request: Request) {
               }
             }
 
-            const tweetText = tweet.text ?? tweet.full_text ?? tweet.tweet?.text ?? "";
+            const tweetText = tweet.text ?? tweet.fullText ?? tweet.full_text ?? "";
             const { error } = await supabase
               .from("competitor_content")
               .insert({
@@ -629,12 +637,13 @@ export async function POST(request: Request) {
                 title: tweetText.slice(0, 200) || null,
                 body_text: tweetText || null,
                 engagement_metrics: {
-                  likes: tweet.likeCount ?? tweet.favoriteCount ?? tweet.favorite_count ?? 0,
-                  comments: tweet.replyCount ?? tweet.reply_count ?? 0,
-                  shares: tweet.retweetCount ?? tweet.retweet_count ?? 0,
-                  url: tweet.url ?? (tweet.id_str ? `https://x.com/i/status/${tweet.id_str}` : null),
+                  likes: tweet.likeCount ?? tweet.favoriteCount ?? 0,
+                  comments: tweet.replyCount ?? 0,
+                  shares: tweet.retweetCount ?? 0,
+                  views: tweet.viewCount ?? 0,
+                  url: tweet.url ?? tweet.twitterUrl ?? null,
                 },
-                published_at: tweet.createdAt ?? tweet.created_at ?? null,
+                published_at: tweet.createdAt ?? null,
                 raw_data: tweet,
               });
 
