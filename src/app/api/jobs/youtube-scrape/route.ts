@@ -119,30 +119,63 @@ async function scrapeWithYouTubeApi(
     let channelId = channelIdentifier;
 
     if (channelIdentifier.startsWith("@") || !channelIdentifier.startsWith("UC")) {
-      // Search for the channel
-      const searchParam = channelIdentifier.startsWith("@")
-        ? `forHandle=${encodeURIComponent(channelIdentifier.replace("@", ""))}`
-        : `forUsername=${encodeURIComponent(channelIdentifier)}`;
+      let resolved = false;
 
-      const chRes = await fetch(
-        `https://www.googleapis.com/youtube/v3/channels?${searchParam}&part=snippet,statistics,contentDetails&key=${apiKey}`,
-        { signal: AbortSignal.timeout(15000) }
-      );
+      // Try forHandle first (for @handle format)
+      if (channelIdentifier.startsWith("@")) {
+        try {
+          const handleRes = await fetch(
+            `https://www.googleapis.com/youtube/v3/channels?forHandle=${encodeURIComponent(channelIdentifier.replace("@", ""))}&part=snippet,statistics,contentDetails&key=${apiKey}`,
+            { signal: AbortSignal.timeout(15000) }
+          );
+          if (handleRes.ok) {
+            const handleData = await handleRes.json();
+            if (handleData.items?.length) {
+              channelId = handleData.items[0].id;
+              resolved = true;
+            }
+          }
+        } catch (e) {
+          console.log(`[YouTube Scrape] forHandle failed for ${channelIdentifier}`);
+        }
+      }
 
-      if (!chRes.ok) {
-        // Try search as fallback
-        const searchRes = await fetch(
-          `https://www.googleapis.com/youtube/v3/search?q=${encodeURIComponent(channelIdentifier)}&type=channel&part=snippet&maxResults=1&key=${apiKey}`,
-          { signal: AbortSignal.timeout(15000) }
-        );
-        if (!searchRes.ok) return null;
-        const searchData = await searchRes.json();
-        if (!searchData.items?.length) return null;
-        channelId = searchData.items[0].snippet.channelId;
-      } else {
-        const chData = await chRes.json();
-        if (!chData.items?.length) return null;
-        channelId = chData.items[0].id;
+      // Try forUsername (for /user/ format)
+      if (!resolved) {
+        try {
+          const userRes = await fetch(
+            `https://www.googleapis.com/youtube/v3/channels?forUsername=${encodeURIComponent(channelIdentifier.replace("@", ""))}&part=snippet,statistics,contentDetails&key=${apiKey}`,
+            { signal: AbortSignal.timeout(15000) }
+          );
+          if (userRes.ok) {
+            const userData = await userRes.json();
+            if (userData.items?.length) {
+              channelId = userData.items[0].id;
+              resolved = true;
+            }
+          }
+        } catch (e) {
+          console.log(`[YouTube Scrape] forUsername failed for ${channelIdentifier}`);
+        }
+      }
+
+      // Fallback: search for the channel by name
+      if (!resolved) {
+        console.log(`[YouTube Scrape] Searching for channel: ${channelIdentifier}`);
+        try {
+          const searchRes = await fetch(
+            `https://www.googleapis.com/youtube/v3/search?q=${encodeURIComponent(channelIdentifier.replace(/[-_]/g, " "))}&type=channel&part=snippet&maxResults=1&key=${apiKey}`,
+            { signal: AbortSignal.timeout(15000) }
+          );
+          if (!searchRes.ok) return null;
+          const searchData = await searchRes.json();
+          if (!searchData.items?.length) return null;
+          channelId = searchData.items[0].snippet.channelId ?? searchData.items[0].id?.channelId;
+          if (!channelId) return null;
+        } catch (e) {
+          console.error(`[YouTube Scrape] Search failed for ${channelIdentifier}:`, e);
+          return null;
+        }
       }
     }
 
