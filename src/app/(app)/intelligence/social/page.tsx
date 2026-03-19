@@ -255,7 +255,7 @@ export default function SocialIntelligencePage() {
     try {
       // First, auto-discover social handles for competitors that don't have them
       const compsWithoutSocials = competitors.filter(
-        (c) => !c.instagram_handle && !c.twitter_handle && c.website_url
+        (c) => !c.instagram_handle && !c.twitter_handle && !c.linkedin_url && c.website_url
       );
       if (compsWithoutSocials.length > 0) {
         toast.info(`Discovering social accounts for ${compsWithoutSocials.length} competitor(s)...`);
@@ -295,7 +295,7 @@ export default function SocialIntelligencePage() {
 
       const totalPosts = data.total_posts ?? data.posts_found ?? 0;
       if (totalPosts > 0) {
-        toast.success(`Social scrape complete! Found ${totalPosts} posts (${data.instagram_posts ?? 0} IG, ${data.twitter_posts ?? 0} TW).`);
+        toast.success(`Social scrape complete! Found ${totalPosts} posts (${data.instagram_posts ?? 0} IG, ${data.twitter_posts ?? 0} TW, ${data.linkedin_posts ?? 0} LI).`);
       } else if (data.message) {
         toast.warning(data.message);
       } else {
@@ -495,12 +495,12 @@ export default function SocialIntelligencePage() {
             </h3>
             <p className="mt-2 max-w-md text-sm text-muted-foreground">
               {competitors.length === 0
-                ? "Add competitors with Instagram or Twitter handles first, then click \"Refresh Social Data\" to scrape their social posts."
+                ? "Add competitors with social handles first, then click \"Refresh Social Data\" to scrape their social posts."
                 : competitors.some(
-                      (c) => c.instagram_handle || c.twitter_handle
+                      (c) => c.instagram_handle || c.twitter_handle || c.linkedin_url
                     )
                   ? "Click \"Refresh Social Data\" to scrape competitor social media posts and generate intelligence."
-                  : "Your competitors don't have Instagram or Twitter handles configured. Add social handles in the Competitors page."}
+                  : "Your competitors don't have social handles configured. Add Instagram, Twitter, or LinkedIn in the Competitors page."}
             </p>
             {competitors.length === 0 && (
               <Link href="/competitors" className="mt-4">

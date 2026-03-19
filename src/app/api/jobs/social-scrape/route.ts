@@ -443,7 +443,7 @@ export async function POST(request: Request) {
 
     // 5c. Filter to competitors that now have social handles
     const socialCompetitors = competitors
-      .filter((c: any) => c.instagram_handle || c.twitter_handle);
+      .filter((c: any) => c.instagram_handle || c.twitter_handle || c.linkedin_url);
 
     console.log(`[Social Scrape] ${socialCompetitors.length} competitors have social handles: ${socialCompetitors.map((c: any) => `${c.name} (IG:${c.instagram_handle || 'none'} TW:${c.twitter_handle || 'none'})`).join(', ')}`);
 
@@ -463,7 +463,7 @@ export async function POST(request: Request) {
         success: true,
         run_id: runId,
         message:
-          "Could not find Instagram or Twitter handles for any competitors. Try adding them manually on the Competitors page.",
+          "Could not find social handles (Instagram, Twitter, or LinkedIn) for any competitors. Try adding them manually on the Competitors page.",
         posts_found: 0,
         enriched: needsEnrichment.length,
       });
@@ -471,11 +471,13 @@ export async function POST(request: Request) {
 
     let instagramCount = 0;
     let twitterCount = 0;
+    let linkedinCount = 0;
     const errors: string[] = [];
 
     // Build handle-to-competitor maps for batching
     const igHandleMap = new Map<string, typeof socialCompetitors[0]>();
     const twHandleMap = new Map<string, typeof socialCompetitors[0]>();
+    const liUrlMap = new Map<string, typeof socialCompetitors[0]>(); // linkedin_url → competitor
 
     for (const comp of socialCompetitors) {
       if (comp.instagram_handle) {
@@ -486,13 +488,22 @@ export async function POST(request: Request) {
         const bare = comp.twitter_handle.replace(/^@/, "");
         twHandleMap.set(bare.toLowerCase(), comp);
       }
+      if (comp.linkedin_url) {
+        // Normalize LinkedIn URL to company posts page
+        let liUrl = comp.linkedin_url;
+        if (!liUrl.endsWith("/posts/") && !liUrl.endsWith("/posts")) {
+          liUrl = liUrl.replace(/\/?$/, "/posts/");
+        }
+        liUrlMap.set(liUrl, comp);
+      }
     }
 
     // 6. BATCH scrape — one Apify call per platform, all handles at once, run in parallel
     const igUrls = Array.from(igHandleMap.keys()).map(h => `https://www.instagram.com/${h}/`);
     const twHandles = Array.from(twHandleMap.keys());
+    const liUrls = Array.from(liUrlMap.keys());
 
-    console.log(`[Social Scrape] Batching: ${igUrls.length} IG profiles, ${twHandles.length} TW handles`);
+    console.log(`[Social Scrape] Batching: ${igUrls.length} IG profiles, ${twHandles.length} TW handles, ${liUrls.length} LI companies`);
 
     const scrapePromises: Promise<void>[] = [];
 
@@ -661,11 +672,118 @@ export async function POST(request: Request) {
       })());
     }
 
-    // Wait for both platform scrapes to complete in parallel
+    // --- LinkedIn batch ---
+    if (liUrls.length > 0) {
+      scrapePromises.push((async () => {
+        try {
+          console.log(`[Social Scrape] Scraping LinkedIn for ${liUrls.length} companies: ${liUrls.join(", ")}`);
+
+          const results = await runApifyActorSync(
+            "supreme_coder~linkedin-post",
+            {
+              urls: liUrls,
+              maxResults: 10 * liUrls.length,
+            },
+            apifyToken,
+            120
+          );
+
+          console.log(`[Social Scrape] LinkedIn batch returned ${results.length} items, first keys: ${JSON.stringify(Object.keys(results[0] || {})).slice(0, 300)}`);
+
+          // Filter out noResults/demo items
+          const validResults = results.filter(
+            (item: any) => !item.noResults && !item.demo && item.text
+          );
+
+          if (validResults.length === 0 && results.length > 0) {
+            const firstItem = results[0];
+            if (firstItem.demo) {
+              errors.push("LinkedIn scraping requires renting this Apify actor.");
+            }
+          }
+
+          console.log(`[Social Scrape] LinkedIn extracted ${validResults.length} valid posts`);
+
+          for (const post of validResults) {
+            // Match to competitor by inputUrl or authorProfileUrl
+            const inputUrl = (post.inputUrl ?? "").toLowerCase();
+            const authorUrl = (post.authorProfileUrl ?? "").toLowerCase();
+            let competitor: typeof socialCompetitors[0] | undefined;
+
+            for (const [liUrl, comp] of liUrlMap.entries()) {
+              if (inputUrl.includes(liUrl.toLowerCase().replace("/posts/", "")) ||
+                  authorUrl.includes(liUrl.toLowerCase().replace("/posts/", ""))) {
+                competitor = comp;
+                break;
+              }
+            }
+
+            if (!competitor) {
+              // Try matching by author name
+              const authorName = (post.authorName ?? "").toLowerCase();
+              for (const comp of socialCompetitors) {
+                if (comp.name && authorName.includes(comp.name.toLowerCase())) {
+                  competitor = comp;
+                  break;
+                }
+              }
+            }
+
+            if (!competitor) continue;
+
+            const extId = post.urn ?? post.shareUrn ?? post.url ?? null;
+            if (extId) {
+              const { data: existing } = await supabase
+                .from("competitor_content")
+                .select("id")
+                .eq("external_id", String(extId))
+                .limit(1);
+              if (existing && existing.length > 0) {
+                linkedinCount++;
+                continue;
+              }
+            }
+
+            const postText = post.text ?? "";
+            const { error } = await supabase
+              .from("competitor_content")
+              .insert({
+                competitor_id: competitor.id,
+                source: "linkedin",
+                external_id: extId ? String(extId) : null,
+                content_type: "social_post",
+                title: postText.slice(0, 200) || null,
+                body_text: postText || null,
+                engagement_metrics: {
+                  likes: post.numLikes ?? 0,
+                  comments: post.numComments ?? 0,
+                  shares: post.numShares ?? 0,
+                  impressions: post.numImpressions ?? null,
+                  url: post.url ?? null,
+                },
+                published_at: post.postedAtISO ?? null,
+                raw_data: post,
+              });
+
+            if (error) {
+              console.error(`[Social Scrape] LinkedIn insert error: ${error.message}`);
+            } else {
+              linkedinCount++;
+            }
+          }
+        } catch (err) {
+          const msg = err instanceof Error ? err.message : String(err);
+          console.error(`[Social Scrape] LinkedIn batch error:`, msg);
+          errors.push(`LI batch: ${msg.slice(0, 150)}`);
+        }
+      })());
+    }
+
+    // Wait for all platform scrapes to complete in parallel
     await Promise.allSettled(scrapePromises);
 
-    const totalPosts = instagramCount + twitterCount;
-    console.log(`[Social Scrape] Total posts scraped: ${totalPosts} (IG: ${instagramCount}, TW: ${twitterCount}), errors: ${errors.length}`);
+    const totalPosts = instagramCount + twitterCount + linkedinCount;
+    console.log(`[Social Scrape] Total posts scraped: ${totalPosts} (IG: ${instagramCount}, TW: ${twitterCount}, LI: ${linkedinCount}), errors: ${errors.length}`);
 
     // 8. Analyze social content with Claude
     let analysisResult = null;
@@ -768,6 +886,7 @@ ${JSON.stringify(postSummaries, null, 2).slice(0, 12000)}`
       run_id: runId,
       instagram_posts: instagramCount,
       twitter_posts: twitterCount,
+      linkedin_posts: linkedinCount,
       total_posts: totalPosts,
       competitors_processed: socialCompetitors.length,
       errors: errors.length > 0 ? errors : undefined,
