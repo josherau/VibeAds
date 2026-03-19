@@ -538,7 +538,10 @@ export async function POST(request: Request) {
           .eq("channel_id", channelIdStr)
           .limit(1);
 
+        let dbChannelId: string; // The UUID from youtube_channels table
+
         if (existingChannel && existingChannel.length > 0) {
+          dbChannelId = existingChannel[0].id;
           await supabase
             .from("youtube_channels")
             .update({
@@ -554,7 +557,7 @@ export async function POST(request: Request) {
             })
             .eq("channel_id", channelIdStr);
         } else {
-          await supabase.from("youtube_channels").insert({
+          const { data: inserted } = await supabase.from("youtube_channels").insert({
             competitor_id: comp.id,
             brand_id: brandId,
             channel_id: channelIdStr,
@@ -565,7 +568,13 @@ export async function POST(request: Request) {
             description: channelData.description ?? null,
             thumbnail_url: channelData.thumbnailUrl ?? null,
             last_scraped_at: new Date().toISOString(),
-          });
+          }).select("id").single();
+          dbChannelId = inserted?.id ?? "";
+        }
+
+        if (!dbChannelId) {
+          errors.push(`${comp.name}: Failed to get channel DB ID`);
+          return;
         }
 
         channelsScraped++;
@@ -582,7 +591,7 @@ export async function POST(request: Request) {
             .limit(1);
 
           const videoPayload = {
-            channel_id: channelIdStr,
+            channel_id: dbChannelId,
             competitor_id: comp.id,
             brand_id: brandId,
             title: video.title ?? null,
