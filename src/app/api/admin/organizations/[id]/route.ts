@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 import { createServiceRoleClient } from "@/lib/supabase/server";
 import { verifySuperAdmin } from "../../route";
 
-// PATCH /api/admin/organizations/[id] — update org
+// PATCH /api/admin/organizations/[id] — update org, assign/unassign brands
 export async function PATCH(
   request: Request,
   { params }: { params: Promise<{ id: string }> }
@@ -15,6 +15,48 @@ export async function PATCH(
 
     const { id } = await params;
     const body = await request.json();
+
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const db = createServiceRoleClient() as any;
+
+    // Handle brand assignment
+    if (typeof body.assign_brand_id === "string") {
+      // Set brand's organization_id
+      const { error: brandError } = await db
+        .from("brands")
+        .update({ organization_id: id })
+        .eq("id", body.assign_brand_id);
+      if (brandError) throw brandError;
+
+      // Also insert into brand_access for backward compat
+      await db.from("brand_access").upsert(
+        { organization_id: id, brand_id: body.assign_brand_id },
+        { onConflict: "organization_id,brand_id" }
+      );
+
+      return NextResponse.json({ ok: true });
+    }
+
+    // Handle brand unassignment
+    if (typeof body.unassign_brand_id === "string") {
+      // Clear brand's organization_id
+      const { error: brandError } = await db
+        .from("brands")
+        .update({ organization_id: null })
+        .eq("id", body.unassign_brand_id);
+      if (brandError) throw brandError;
+
+      // Remove from brand_access
+      await db
+        .from("brand_access")
+        .delete()
+        .eq("organization_id", id)
+        .eq("brand_id", body.unassign_brand_id);
+
+      return NextResponse.json({ ok: true });
+    }
+
+    // Handle org field updates
     const updates: Record<string, unknown> = {};
 
     if (typeof body.name === "string" && body.name.trim()) {
@@ -33,9 +75,6 @@ export async function PATCH(
         { status: 400 }
       );
     }
-
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const db = createServiceRoleClient() as any;
 
     const { data: org, error } = await db
       .from("organizations")

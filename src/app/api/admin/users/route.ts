@@ -39,6 +39,44 @@ export async function GET() {
       .select("user_id, organization_id, role, status, organizations(id, name)")
       .eq("status", "active");
 
+    // Fetch all brand memberships
+    const { data: brandMemberships } = await db
+      .from("brand_members")
+      .select("user_id, brand_id, role, status")
+      .eq("status", "active");
+
+    // Build brand membership map
+    const brandMemberMap = new Map<
+      string,
+      Array<{ brand_id: string; brand_name: string; role: string }>
+    >();
+    // Get brand names for brand memberships
+    const bmBrandIds = [
+      ...new Set(
+        (brandMemberships ?? [])
+          .map((bm: { brand_id: string }) => bm.brand_id)
+      ),
+    ];
+    let bmBrandNames = new Map<string, string>();
+    if (bmBrandIds.length > 0) {
+      const { data: bmBrands } = await db
+        .from("brands")
+        .select("id, name")
+        .in("id", bmBrandIds);
+      for (const b of bmBrands ?? []) {
+        bmBrandNames.set(b.id, b.name);
+      }
+    }
+    for (const bm of brandMemberships ?? []) {
+      if (!bm.user_id) continue;
+      if (!brandMemberMap.has(bm.user_id)) brandMemberMap.set(bm.user_id, []);
+      brandMemberMap.get(bm.user_id)!.push({
+        brand_id: bm.brand_id,
+        brand_name: bmBrandNames.get(bm.brand_id) || "Unknown",
+        role: bm.role,
+      });
+    }
+
     // Build user_roles map
     const rolesMap = new Map<string, boolean>();
     for (const r of userRoles ?? []) {
@@ -84,6 +122,7 @@ export async function GET() {
         is_super_admin: rolesMap.get(u.id) ?? false,
         brands: brandsMap.get(u.id) ?? [],
         organizations: membershipsMap.get(u.id) ?? [],
+        brand_memberships: brandMemberMap.get(u.id) ?? [],
         last_sign_in_at: u.last_sign_in_at || null,
         created_at: u.created_at || null,
         banned_until: u.banned_until || null,

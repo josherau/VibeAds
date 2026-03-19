@@ -33,6 +33,19 @@ export async function GET() {
       );
     }
 
+    // Get brand member counts
+    const { data: brandMembers } = await db
+      .from("brand_members")
+      .select("brand_id");
+
+    const brandMemberCountMap = new Map<string, number>();
+    for (const bm of brandMembers ?? []) {
+      brandMemberCountMap.set(
+        bm.brand_id,
+        (brandMemberCountMap.get(bm.brand_id) || 0) + 1
+      );
+    }
+
     // Get brand_access for org assignment
     const { data: brandAccess } = await db
       .from("brand_access")
@@ -81,6 +94,7 @@ export async function GET() {
         owner_email: ownerEmails.get(b.user_id) || "",
         organization: orgMap.get(b.id) || null,
         competitor_count: competitorCountMap.get(b.id) || 0,
+        brand_member_count: brandMemberCountMap.get(b.id) || 0,
       })
     );
 

@@ -96,6 +96,9 @@ export async function DELETE(
     // Remove organization memberships
     await db.from("organization_members").delete().eq("user_id", id);
 
+    // Remove brand memberships
+    await db.from("brand_members").delete().eq("user_id", id);
+
     // Delete user from auth
     const { error } = await db.auth.admin.deleteUser(id);
     if (error) throw error;

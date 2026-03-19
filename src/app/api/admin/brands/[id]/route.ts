@@ -28,17 +28,28 @@ export async function PATCH(
       if (error) throw error;
     }
 
-    // Update org assignment
+    // Update org assignment — update both brands.organization_id and brand_access
     if (typeof body.organization_id === "string") {
-      // Remove existing org assignment
+      // Update brands.organization_id
+      const orgId = body.organization_id || null;
+      const { error: orgError } = await db
+        .from("brands")
+        .update({ organization_id: orgId })
+        .eq("id", id);
+      if (orgError) throw orgError;
+
+      // Remove existing brand_access
       await db.from("brand_access").delete().eq("brand_id", id);
 
       if (body.organization_id) {
-        // Add new org assignment
-        const { error } = await db.from("brand_access").insert({
-          organization_id: body.organization_id,
-          brand_id: id,
-        });
+        // Add new brand_access for backward compat
+        const { error } = await db.from("brand_access").upsert(
+          {
+            organization_id: body.organization_id,
+            brand_id: id,
+          },
+          { onConflict: "organization_id,brand_id" }
+        );
         if (error) throw error;
       }
     }
@@ -77,6 +88,9 @@ export async function DELETE(
 
     // Remove member_brand_access
     await db.from("member_brand_access").delete().eq("brand_id", id);
+
+    // Remove brand_members
+    await db.from("brand_members").delete().eq("brand_id", id);
 
     // Remove competitors
     await db.from("competitors").delete().eq("brand_id", id);

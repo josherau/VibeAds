@@ -26,7 +26,24 @@ export async function GET() {
       .select("organization_id")
       .eq("status", "active");
 
-    // Get brand_access counts
+    // Get brands linked to orgs (via organization_id)
+    const { data: orgBrands } = await db
+      .from("brands")
+      .select("id, name, organization_id")
+      .not("organization_id", "is", null);
+
+    const orgBrandsMap = new Map<
+      string,
+      Array<{ id: string; name: string }>
+    >();
+    for (const b of orgBrands ?? []) {
+      if (!b.organization_id) continue;
+      if (!orgBrandsMap.has(b.organization_id))
+        orgBrandsMap.set(b.organization_id, []);
+      orgBrandsMap.get(b.organization_id)!.push({ id: b.id, name: b.name });
+    }
+
+    // Get brand_access counts (backward compat)
     const { data: brandAccess } = await db
       .from("brand_access")
       .select("organization_id, brand_id");
@@ -73,6 +90,7 @@ export async function GET() {
         owner_email: ownerEmails.get(o.owner_id) || "",
         member_count: memberCountMap.get(o.id) || 0,
         brand_count: brandCountMap.get(o.id) || 0,
+        brands: orgBrandsMap.get(o.id) || [],
       })
     );
 

@@ -45,6 +45,7 @@ import {
   CheckCircle,
   XCircle,
   ArrowLeft,
+  Palette,
 } from "lucide-react";
 import { toast } from "sonner";
 import { useBrand } from "@/lib/brand-context";
@@ -61,12 +62,6 @@ interface Organization {
   user_role: string;
 }
 
-interface MemberBrandAccess {
-  id: string;
-  brand_id: string;
-  permission_level: string;
-}
-
 interface OrgMember {
   id: string;
   organization_id: string;
@@ -77,13 +72,23 @@ interface OrgMember {
   status: string;
   joined_at: string | null;
   created_at: string;
-  member_brand_access: MemberBrandAccess[];
 }
 
 interface OrgBrand {
   id: string;
   name: string;
   primary_color: string | null;
+}
+
+interface BrandMember {
+  id: string;
+  brand_id: string;
+  user_id: string | null;
+  role: string;
+  invited_email: string | null;
+  status: string;
+  joined_at: string | null;
+  created_at: string;
 }
 
 // ── Helpers ──────────────────────────────────────────────────────
@@ -95,6 +100,8 @@ function roleColor(role: string) {
     case "admin":
       return "bg-blue-500/10 text-blue-500 border-blue-500/20";
     case "member":
+      return "bg-green-500/10 text-green-500 border-green-500/20";
+    case "editor":
       return "bg-green-500/10 text-green-500 border-green-500/20";
     case "viewer":
       return "bg-gray-500/10 text-gray-400 border-gray-500/20";
@@ -156,31 +163,41 @@ export default function TeamSettingsPage() {
   const [orgBrands, setOrgBrands] = useState<OrgBrand[]>([]);
   const [currentUserId, setCurrentUserId] = useState<string | null>(null);
 
+  // Brand members for owned brands
+  const [selectedBrandForMembers, setSelectedBrandForMembers] = useState<string | null>(null);
+  const [brandMembers, setBrandMembers] = useState<BrandMember[]>([]);
+  const [loadingBrandMembers, setLoadingBrandMembers] = useState(false);
+
   // Dialog states
   const [showCreateOrg, setShowCreateOrg] = useState(false);
   const [showInvite, setShowInvite] = useState(false);
   const [showEditMember, setShowEditMember] = useState(false);
   const [showRemoveConfirm, setShowRemoveConfirm] = useState(false);
-  const [showAssignBrand, setShowAssignBrand] = useState(false);
+  const [showInviteBrandMember, setShowInviteBrandMember] = useState(false);
+  const [showRemoveBrandMember, setShowRemoveBrandMember] = useState(false);
 
   // Form states
   const [newOrgName, setNewOrgName] = useState("");
   const [inviteEmail, setInviteEmail] = useState("");
   const [inviteRole, setInviteRole] = useState("member");
-  const [selectedBrandIds, setSelectedBrandIds] = useState<string[]>([]);
+  const [inviteType, setInviteType] = useState<"org" | "brand">("org");
+  const [inviteBrandId, setInviteBrandId] = useState("");
   const [editingMember, setEditingMember] = useState<OrgMember | null>(null);
   const [editRole, setEditRole] = useState("");
   const [removingMember, setRemovingMember] = useState<OrgMember | null>(null);
-  const [assignBrandMember, setAssignBrandMember] = useState<OrgMember | null>(null);
-  const [assignBrandId, setAssignBrandId] = useState("");
-  const [assignPermission, setAssignPermission] = useState("view");
+
+  // Brand member invite states
+  const [brandMemberEmail, setBrandMemberEmail] = useState("");
+  const [brandMemberRole, setBrandMemberRole] = useState("viewer");
+  const [invitingBrandMember, setInvitingBrandMember] = useState(false);
+  const [removingBrandMemberData, setRemovingBrandMemberData] = useState<BrandMember | null>(null);
 
   // Loading states
   const [creatingOrg, setCreatingOrg] = useState(false);
   const [inviting, setInviting] = useState(false);
   const [updatingMember, setUpdatingMember] = useState(false);
   const [removingMemberLoading, setRemovingMemberLoading] = useState(false);
-  const [assigningBrand, setAssigningBrand] = useState(false);
+  const [removingBrandMemberLoading, setRemovingBrandMemberLoading] = useState(false);
 
   // ── Fetch Functions ──────────────────────────────────────────
 
@@ -219,6 +236,29 @@ export default function TeamSettingsPage() {
     }
   }, []);
 
+  const fetchBrandMembers = useCallback(
+    async (brandId: string) => {
+      setLoadingBrandMembers(true);
+      try {
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const { data, error } = await (supabase as any)
+          .from("brand_members")
+          .select("*")
+          .eq("brand_id", brandId)
+          .order("created_at", { ascending: true });
+
+        if (error) throw error;
+        setBrandMembers(data ?? []);
+      } catch (err) {
+        console.error("Failed to fetch brand members:", err);
+        setBrandMembers([]);
+      } finally {
+        setLoadingBrandMembers(false);
+      }
+    },
+    [supabase]
+  );
+
   // ── Initial Load ──────────────────────────────────────────
 
   useEffect(() => {
@@ -247,6 +287,15 @@ export default function TeamSettingsPage() {
       setOrgBrands([]);
     }
   }, [selectedOrg, fetchMembers, fetchOrgBrands]);
+
+  // Fetch brand members when selected brand changes
+  useEffect(() => {
+    if (selectedBrandForMembers) {
+      fetchBrandMembers(selectedBrandForMembers);
+    } else {
+      setBrandMembers([]);
+    }
+  }, [selectedBrandForMembers, fetchBrandMembers]);
 
   // ── Action Handlers ──────────────────────────────────────────
 
@@ -281,7 +330,43 @@ export default function TeamSettingsPage() {
   }
 
   async function inviteMember() {
-    if (!inviteEmail.trim() || !selectedOrg) return;
+    if (!inviteEmail.trim()) return;
+
+    if (inviteType === "brand" && inviteBrandId) {
+      // Invite to brand directly
+      setInviting(true);
+      try {
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const { error } = await (supabase as any)
+          .from("brand_members")
+          .insert({
+            brand_id: inviteBrandId,
+            invited_email: inviteEmail.trim(),
+            role: inviteRole === "member" || inviteRole === "admin" ? "editor" : "viewer",
+            status: "pending",
+          });
+
+        if (error) throw error;
+
+        toast.success(`Brand invitation sent to ${inviteEmail.trim()}`);
+        setInviteEmail("");
+        setInviteRole("member");
+        setShowInvite(false);
+        if (selectedBrandForMembers === inviteBrandId) {
+          fetchBrandMembers(inviteBrandId);
+        }
+      } catch (err) {
+        toast.error(
+          err instanceof Error ? err.message : "Failed to send invitation"
+        );
+      } finally {
+        setInviting(false);
+      }
+      return;
+    }
+
+    // Invite to organization
+    if (!selectedOrg) return;
     setInviting(true);
     try {
       const res = await fetch(`/api/organizations/${selectedOrg.id}/members`, {
@@ -290,7 +375,6 @@ export default function TeamSettingsPage() {
         body: JSON.stringify({
           email: inviteEmail.trim(),
           role: inviteRole,
-          brand_ids: selectedBrandIds,
         }),
       });
       const data = await res.json();
@@ -299,7 +383,6 @@ export default function TeamSettingsPage() {
       toast.success(`Invitation sent to ${inviteEmail.trim()}`);
       setInviteEmail("");
       setInviteRole("member");
-      setSelectedBrandIds([]);
       setShowInvite(false);
       fetchMembers(selectedOrg.id);
     } catch (err) {
@@ -363,55 +446,58 @@ export default function TeamSettingsPage() {
     }
   }
 
-  async function assignBrand() {
-    if (!assignBrandMember || !selectedOrg || !assignBrandId) return;
-    setAssigningBrand(true);
+  async function inviteBrandMemberAction() {
+    if (!brandMemberEmail.trim() || !selectedBrandForMembers) return;
+    setInvitingBrandMember(true);
     try {
-      const res = await fetch(
-        `/api/organizations/${selectedOrg.id}/members/${assignBrandMember.id}/brands`,
-        {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            brand_id: assignBrandId,
-            permission_level: assignPermission,
-          }),
-        }
-      );
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error);
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const { error } = await (supabase as any)
+        .from("brand_members")
+        .insert({
+          brand_id: selectedBrandForMembers,
+          invited_email: brandMemberEmail.trim(),
+          role: brandMemberRole,
+          status: "pending",
+        });
 
-      toast.success("Brand access granted");
-      setShowAssignBrand(false);
-      setAssignBrandMember(null);
-      setAssignBrandId("");
-      setAssignPermission("view");
-      fetchMembers(selectedOrg.id);
+      if (error) throw error;
+
+      toast.success(`Invitation sent to ${brandMemberEmail.trim()}`);
+      setBrandMemberEmail("");
+      setBrandMemberRole("viewer");
+      setShowInviteBrandMember(false);
+      fetchBrandMembers(selectedBrandForMembers);
     } catch (err) {
       toast.error(
-        err instanceof Error ? err.message : "Failed to grant brand access"
+        err instanceof Error ? err.message : "Failed to invite brand member"
       );
     } finally {
-      setAssigningBrand(false);
+      setInvitingBrandMember(false);
     }
   }
 
-  async function revokeBrandAccess(memberId: string, brandId: string) {
-    if (!selectedOrg) return;
+  async function removeBrandMember() {
+    if (!removingBrandMemberData || !selectedBrandForMembers) return;
+    setRemovingBrandMemberLoading(true);
     try {
-      const res = await fetch(
-        `/api/organizations/${selectedOrg.id}/members/${memberId}/brands?brand_id=${brandId}`,
-        { method: "DELETE" }
-      );
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error);
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const { error } = await (supabase as any)
+        .from("brand_members")
+        .delete()
+        .eq("id", removingBrandMemberData.id);
 
-      toast.success("Brand access revoked");
-      fetchMembers(selectedOrg.id);
+      if (error) throw error;
+
+      toast.success("Brand member removed");
+      setShowRemoveBrandMember(false);
+      setRemovingBrandMemberData(null);
+      fetchBrandMembers(selectedBrandForMembers);
     } catch (err) {
       toast.error(
-        err instanceof Error ? err.message : "Failed to revoke brand access"
+        err instanceof Error ? err.message : "Failed to remove brand member"
       );
+    } finally {
+      setRemovingBrandMemberLoading(false);
     }
   }
 
@@ -447,6 +533,9 @@ export default function TeamSettingsPage() {
   const unassignedBrands = userBrands.filter(
     (b) => !orgBrands.some((ob) => ob.id === b.id)
   );
+
+  // Brands the current user owns (for brand member management)
+  const ownedBrands = userBrands;
 
   // ── Render ──────────────────────────────────────────────────
 
@@ -550,7 +639,8 @@ export default function TeamSettingsPage() {
               <div>
                 <CardTitle className="text-base">Organization Brands</CardTitle>
                 <CardDescription>
-                  Brands shared within {selectedOrg.name}
+                  Brands shared within {selectedOrg.name}. All org members
+                  inherit access to these brands based on their role.
                 </CardDescription>
               </div>
             </div>
@@ -624,17 +714,24 @@ export default function TeamSettingsPage() {
               <div>
                 <CardTitle className="flex items-center gap-2">
                   <Users className="h-5 w-5" />
-                  Team Members
+                  Org Members
                 </CardTitle>
                 <CardDescription>
                   {activeMembers.length} active member
                   {activeMembers.length !== 1 ? "s" : ""}
                   {pendingMembers.length > 0 &&
                     ` / ${pendingMembers.length} pending`}
+                  {" "} -- Members inherit access to ALL brands in the org
                 </CardDescription>
               </div>
               {isOwnerOrAdmin && (
-                <Button size="sm" onClick={() => setShowInvite(true)}>
+                <Button
+                  size="sm"
+                  onClick={() => {
+                    setInviteType("org");
+                    setShowInvite(true);
+                  }}
+                >
                   <UserPlus className="mr-2 h-4 w-4" />
                   Invite Member
                 </Button>
@@ -693,70 +790,11 @@ export default function TeamSettingsPage() {
                           </span>
                         </Badge>
                       </div>
-
-                      {/* Brand access chips */}
-                      {member.member_brand_access &&
-                        member.member_brand_access.length > 0 && (
-                          <div className="flex flex-wrap gap-1 mt-2">
-                            {member.member_brand_access.map((ba) => {
-                              const brand = orgBrands.find(
-                                (b) => b.id === ba.brand_id
-                              ) ||
-                                userBrands.find(
-                                  (b) => b.id === ba.brand_id
-                                );
-                              return (
-                                <div
-                                  key={ba.id}
-                                  className="flex items-center gap-1 rounded bg-accent px-2 py-0.5 text-[11px]"
-                                >
-                                  <div
-                                    className="h-2.5 w-2.5 rounded-sm"
-                                    style={{
-                                      backgroundColor:
-                                        brand?.primary_color || "#6366f1",
-                                    }}
-                                  />
-                                  <span>{brand?.name || "Unknown"}</span>
-                                  <span className="text-muted-foreground">
-                                    ({ba.permission_level})
-                                  </span>
-                                  {isOwnerOrAdmin &&
-                                    member.role !== "owner" && (
-                                      <button
-                                        onClick={() =>
-                                          revokeBrandAccess(
-                                            member.id,
-                                            ba.brand_id
-                                          )
-                                        }
-                                        className="ml-0.5 text-muted-foreground hover:text-destructive transition-colors"
-                                      >
-                                        <XCircle className="h-3 w-3" />
-                                      </button>
-                                    )}
-                                </div>
-                              );
-                            })}
-                          </div>
-                        )}
                     </div>
 
                     {/* Actions */}
                     {isOwnerOrAdmin && member.role !== "owner" && (
                       <div className="flex items-center gap-1 shrink-0">
-                        <Button
-                          variant="ghost"
-                          size="icon"
-                          className="h-8 w-8"
-                          onClick={() => {
-                            setAssignBrandMember(member);
-                            setShowAssignBrand(true);
-                          }}
-                          title="Manage brand access"
-                        >
-                          <Eye className="h-4 w-4" />
-                        </Button>
                         <Button
                           variant="ghost"
                           size="icon"
@@ -792,54 +830,123 @@ export default function TeamSettingsPage() {
         </Card>
       )}
 
-      {/* Pending Invitations Section */}
-      {selectedOrg && pendingMembers.length > 0 && (
+      {/* Brand Members Section */}
+      {ownedBrands.length > 0 && (
         <Card>
           <CardHeader>
-            <CardTitle className="flex items-center gap-2 text-base">
-              <Mail className="h-5 w-5" />
-              Pending Invitations
-            </CardTitle>
-            <CardDescription>
-              {pendingMembers.length} invitation
-              {pendingMembers.length !== 1 ? "s" : ""} awaiting acceptance
-            </CardDescription>
-          </CardHeader>
-          <CardContent>
-            <div className="divide-y divide-border">
-              {pendingMembers.map((member) => (
-                <div
-                  key={member.id}
-                  className="flex items-center justify-between py-3 first:pt-0 last:pb-0"
-                >
-                  <div className="flex items-center gap-3">
-                    <Clock className="h-4 w-4 text-yellow-500" />
-                    <div>
-                      <p className="text-sm font-medium">
-                        {member.invited_email}
-                      </p>
-                      <p className="text-xs text-muted-foreground capitalize">
-                        Role: {member.role}
-                      </p>
-                    </div>
-                  </div>
-                  {isOwnerOrAdmin && (
-                    <Button
-                      variant="ghost"
-                      size="sm"
-                      className="text-destructive hover:text-destructive"
-                      onClick={() => {
-                        setRemovingMember(member);
-                        setShowRemoveConfirm(true);
-                      }}
-                    >
-                      <Trash2 className="mr-1 h-3.5 w-3.5" />
-                      Cancel
-                    </Button>
-                  )}
-                </div>
-              ))}
+            <div>
+              <CardTitle className="flex items-center gap-2">
+                <Palette className="h-5 w-5" />
+                Brand Members
+              </CardTitle>
+              <CardDescription>
+                Invite people directly to a specific brand. They will only see
+                that brand, not all org brands.
+              </CardDescription>
             </div>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            {/* Brand selector */}
+            <div className="flex items-center gap-3">
+              <Label className="text-sm shrink-0">Select Brand:</Label>
+              <Select
+                value={selectedBrandForMembers || ""}
+                onValueChange={(v) =>
+                  setSelectedBrandForMembers(v || null)
+                }
+              >
+                <SelectTrigger className="max-w-xs">
+                  <SelectValue placeholder="Choose a brand" />
+                </SelectTrigger>
+                <SelectContent>
+                  {ownedBrands.map((brand) => (
+                    <SelectItem key={brand.id} value={brand.id}>
+                      {brand.name}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+
+            {selectedBrandForMembers && (
+              <>
+                <Separator />
+                <div className="flex items-center justify-between">
+                  <p className="text-sm text-muted-foreground">
+                    {brandMembers.length} brand member
+                    {brandMembers.length !== 1 ? "s" : ""}
+                  </p>
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    onClick={() => setShowInviteBrandMember(true)}
+                  >
+                    <UserPlus className="mr-2 h-3.5 w-3.5" />
+                    Invite to Brand
+                  </Button>
+                </div>
+
+                {loadingBrandMembers ? (
+                  <div className="flex items-center justify-center py-4">
+                    <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
+                  </div>
+                ) : brandMembers.length === 0 ? (
+                  <div className="text-center py-6 text-muted-foreground">
+                    <Users className="h-10 w-10 mx-auto mb-2 opacity-40" />
+                    <p className="text-sm">
+                      No direct brand members. Invite someone to give them
+                      access to just this brand.
+                    </p>
+                  </div>
+                ) : (
+                  <div className="divide-y divide-border">
+                    {brandMembers.map((member) => (
+                      <div
+                        key={member.id}
+                        className="flex items-center justify-between py-3 first:pt-0 last:pb-0"
+                      >
+                        <div className="flex items-center gap-3">
+                          <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-accent text-xs font-medium">
+                            {(member.invited_email?.[0] || "?").toUpperCase()}
+                          </div>
+                          <div>
+                            <p className="text-sm font-medium">
+                              {member.invited_email || "Unknown"}
+                            </p>
+                            <div className="flex items-center gap-1.5 mt-0.5">
+                              <Badge
+                                variant="outline"
+                                className={`text-[10px] ${roleColor(member.role)}`}
+                              >
+                                {member.role}
+                              </Badge>
+                              <Badge
+                                variant="outline"
+                                className={`text-[10px] ${statusColor(member.status)}`}
+                              >
+                                {member.status}
+                              </Badge>
+                            </div>
+                          </div>
+                        </div>
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          className="h-8 w-8 text-destructive hover:text-destructive"
+                          onClick={() => {
+                            setRemovingBrandMemberData(member);
+                            setShowRemoveBrandMember(true);
+                          }}
+                          title="Remove brand member"
+                        >
+                          <Trash2 className="h-4 w-4" />
+                        </Button>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </>
+            )}
           </CardContent>
         </Card>
       )}
@@ -889,10 +996,52 @@ export default function TeamSettingsPage() {
           <DialogHeader>
             <DialogTitle>Invite Team Member</DialogTitle>
             <DialogDescription>
-              Send an invitation to join {selectedOrg?.name}
+              Choose to invite to the organization (access to all brands) or
+              directly to a specific brand.
             </DialogDescription>
           </DialogHeader>
           <div className="space-y-4 py-4">
+            <div className="space-y-2">
+              <Label>Invite Type</Label>
+              <Select
+                value={inviteType}
+                onValueChange={(v) => setInviteType(v as "org" | "brand")}
+              >
+                <SelectTrigger>
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="org">
+                    Invite to Organization (sees all brands)
+                  </SelectItem>
+                  <SelectItem value="brand">
+                    Invite to Brand (sees one brand)
+                  </SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+
+            {inviteType === "brand" && (
+              <div className="space-y-2">
+                <Label>Brand</Label>
+                <Select
+                  value={inviteBrandId}
+                  onValueChange={(v) => v && setInviteBrandId(v)}
+                >
+                  <SelectTrigger>
+                    <SelectValue placeholder="Select a brand" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {userBrands.map((brand) => (
+                      <SelectItem key={brand.id} value={brand.id}>
+                        {brand.name}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+            )}
+
             <div className="space-y-2">
               <Label htmlFor="invite-email">Email Address</Label>
               <Input
@@ -905,66 +1054,54 @@ export default function TeamSettingsPage() {
             </div>
             <div className="space-y-2">
               <Label>Role</Label>
-              <Select value={inviteRole} onValueChange={(v) => v && setInviteRole(v)}>
-                <SelectTrigger>
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="admin">
-                    Admin - Can manage members and brands
-                  </SelectItem>
-                  <SelectItem value="member">
-                    Member - Can edit shared brands
-                  </SelectItem>
-                  <SelectItem value="viewer">
-                    Viewer - Read-only access
-                  </SelectItem>
-                </SelectContent>
-              </Select>
+              {inviteType === "org" ? (
+                <Select
+                  value={inviteRole}
+                  onValueChange={(v) => v && setInviteRole(v)}
+                >
+                  <SelectTrigger>
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="admin">
+                      Admin - Manage members + edit all brands
+                    </SelectItem>
+                    <SelectItem value="member">
+                      Member - Edit all brands
+                    </SelectItem>
+                    <SelectItem value="viewer">
+                      Viewer - Read-only access
+                    </SelectItem>
+                  </SelectContent>
+                </Select>
+              ) : (
+                <Select
+                  value={inviteRole}
+                  onValueChange={(v) => v && setInviteRole(v)}
+                >
+                  <SelectTrigger>
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="editor">
+                      Editor - Can edit this brand
+                    </SelectItem>
+                    <SelectItem value="viewer">
+                      Viewer - Read-only access
+                    </SelectItem>
+                  </SelectContent>
+                </Select>
+              )}
             </div>
-            {orgBrands.length > 0 && (
-              <div className="space-y-2">
-                <Label>Grant access to brands</Label>
-                <div className="space-y-2 max-h-40 overflow-y-auto">
-                  {orgBrands.map((brand) => (
-                    <label
-                      key={brand.id}
-                      className="flex items-center gap-2 cursor-pointer"
-                    >
-                      <input
-                        type="checkbox"
-                        checked={selectedBrandIds.includes(brand.id)}
-                        onChange={(e) => {
-                          if (e.target.checked) {
-                            setSelectedBrandIds([
-                              ...selectedBrandIds,
-                              brand.id,
-                            ]);
-                          } else {
-                            setSelectedBrandIds(
-                              selectedBrandIds.filter((id) => id !== brand.id)
-                            );
-                          }
-                        }}
-                        className="rounded border-border"
-                      />
-                      <div
-                        className="h-4 w-4 rounded-sm"
-                        style={{
-                          backgroundColor: brand.primary_color || "#6366f1",
-                        }}
-                      />
-                      <span className="text-sm">{brand.name}</span>
-                    </label>
-                  ))}
-                </div>
-              </div>
-            )}
           </div>
           <DialogFooter>
             <Button
               onClick={inviteMember}
-              disabled={inviting || !inviteEmail.trim()}
+              disabled={
+                inviting ||
+                !inviteEmail.trim() ||
+                (inviteType === "brand" && !inviteBrandId)
+              }
             >
               {inviting && (
                 <Loader2 className="mr-2 h-4 w-4 animate-spin" />
@@ -988,7 +1125,10 @@ export default function TeamSettingsPage() {
           <div className="space-y-4 py-4">
             <div className="space-y-2">
               <Label>Role</Label>
-              <Select value={editRole} onValueChange={(v) => v && setEditRole(v)}>
+              <Select
+                value={editRole}
+                onValueChange={(v) => v && setEditRole(v)}
+              >
                 <SelectTrigger>
                   <SelectValue />
                 </SelectTrigger>
@@ -1019,7 +1159,7 @@ export default function TeamSettingsPage() {
             <DialogDescription>
               Are you sure you want to remove{" "}
               <strong>{removingMember?.invited_email}</strong> from{" "}
-              {selectedOrg?.name}? This will revoke all their brand access.
+              {selectedOrg?.name}? They will lose access to all org brands.
             </DialogDescription>
           </DialogHeader>
           <DialogFooter>
@@ -1043,51 +1183,44 @@ export default function TeamSettingsPage() {
         </DialogContent>
       </Dialog>
 
-      {/* Assign Brand Access Dialog */}
-      <Dialog open={showAssignBrand} onOpenChange={setShowAssignBrand}>
+      {/* Invite Brand Member Dialog */}
+      <Dialog
+        open={showInviteBrandMember}
+        onOpenChange={setShowInviteBrandMember}
+      >
         <DialogContent className="sm:max-w-md">
           <DialogHeader>
-            <DialogTitle>Grant Brand Access</DialogTitle>
+            <DialogTitle>Invite Brand Member</DialogTitle>
             <DialogDescription>
-              Grant {assignBrandMember?.invited_email} access to a brand
+              Invite someone with direct access to this brand only.
             </DialogDescription>
           </DialogHeader>
           <div className="space-y-4 py-4">
             <div className="space-y-2">
-              <Label>Brand</Label>
-              <Select value={assignBrandId} onValueChange={(v) => v && setAssignBrandId(v)}>
-                <SelectTrigger>
-                  <SelectValue placeholder="Select a brand" />
-                </SelectTrigger>
-                <SelectContent>
-                  {orgBrands.map((brand) => (
-                    <SelectItem key={brand.id} value={brand.id}>
-                      {brand.name}
-                    </SelectItem>
-                  ))}
-                  {userBrands
-                    .filter((b) => !orgBrands.some((ob) => ob.id === b.id))
-                    .map((brand) => (
-                      <SelectItem key={brand.id} value={brand.id}>
-                        {brand.name}
-                      </SelectItem>
-                    ))}
-                </SelectContent>
-              </Select>
+              <Label htmlFor="brand-member-email">Email Address</Label>
+              <Input
+                id="brand-member-email"
+                type="email"
+                value={brandMemberEmail}
+                onChange={(e) => setBrandMemberEmail(e.target.value)}
+                placeholder="user@example.com"
+              />
             </div>
             <div className="space-y-2">
-              <Label>Permission Level</Label>
+              <Label>Role</Label>
               <Select
-                value={assignPermission}
-                onValueChange={(v) => v && setAssignPermission(v)}
+                value={brandMemberRole}
+                onValueChange={(v) => v && setBrandMemberRole(v)}
               >
                 <SelectTrigger>
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="view">View - Read-only access</SelectItem>
-                  <SelectItem value="edit">
-                    Edit - Can modify brand data
+                  <SelectItem value="editor">
+                    Editor - Can edit this brand
+                  </SelectItem>
+                  <SelectItem value="viewer">
+                    Viewer - Read-only access
                   </SelectItem>
                 </SelectContent>
               </Select>
@@ -1095,13 +1228,49 @@ export default function TeamSettingsPage() {
           </div>
           <DialogFooter>
             <Button
-              onClick={assignBrand}
-              disabled={assigningBrand || !assignBrandId}
+              onClick={inviteBrandMemberAction}
+              disabled={invitingBrandMember || !brandMemberEmail.trim()}
             >
-              {assigningBrand && (
+              {invitingBrandMember && (
                 <Loader2 className="mr-2 h-4 w-4 animate-spin" />
               )}
-              Grant Access
+              <Mail className="mr-2 h-4 w-4" />
+              Send Invitation
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Remove Brand Member Confirmation */}
+      <Dialog
+        open={showRemoveBrandMember}
+        onOpenChange={setShowRemoveBrandMember}
+      >
+        <DialogContent className="sm:max-w-sm">
+          <DialogHeader>
+            <DialogTitle>Remove Brand Member</DialogTitle>
+            <DialogDescription>
+              Are you sure you want to remove{" "}
+              <strong>{removingBrandMemberData?.invited_email}</strong> from
+              this brand?
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button
+              variant="outline"
+              onClick={() => setShowRemoveBrandMember(false)}
+            >
+              Cancel
+            </Button>
+            <Button
+              variant="destructive"
+              onClick={removeBrandMember}
+              disabled={removingBrandMemberLoading}
+            >
+              {removingBrandMemberLoading && (
+                <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+              )}
+              Remove
             </Button>
           </DialogFooter>
         </DialogContent>
