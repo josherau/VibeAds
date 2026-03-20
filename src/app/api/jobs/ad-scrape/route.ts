@@ -112,7 +112,7 @@ async function scrapeMetaAds(
         maxAds: 15,
       },
       apifyToken,
-      60
+      120
     );
 
     let adsFound = 0;
@@ -434,7 +434,7 @@ export async function POST(request: Request) {
 
     // 6. Scrape ads — process ALL competitors in parallel to fit in 300s timeout
     //    Each Apify actor call takes 30-90s, so we run them all concurrently
-    const MAX_COMPETITORS_PER_RUN = 3; // 3 concurrent = ~90s total with parallel execution
+    const MAX_COMPETITORS_PER_RUN = 2; // 2 concurrent — each Apify call needs ~90s
     const compsToProcess = competitors.slice(0, MAX_COMPETITORS_PER_RUN);
     const compsDeferred = competitors.length - compsToProcess.length;
 
