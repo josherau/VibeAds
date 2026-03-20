@@ -592,6 +592,27 @@ export default function AdIntelligencePage() {
                           {ad.competitor_name}
                         </p>
 
+                        {/* Ad creative image/video */}
+                        {ad.media_urls && (ad.media_urls as string[]).length > 0 && (
+                          <div className="relative w-full aspect-video rounded-md overflow-hidden bg-muted">
+                            {/* eslint-disable-next-line @next/next/no-img-element */}
+                            <img
+                              src={(ad.media_urls as string[])[0]}
+                              alt={ad.headline ?? "Ad creative"}
+                              className="w-full h-full object-cover"
+                              loading="lazy"
+                              onError={(e) => {
+                                (e.target as HTMLImageElement).style.display = "none";
+                              }}
+                            />
+                            {(ad.media_urls as string[]).length > 1 && (
+                              <div className="absolute bottom-1 right-1 bg-black/60 text-white text-[10px] px-1.5 py-0.5 rounded">
+                                +{(ad.media_urls as string[]).length - 1} more
+                              </div>
+                            )}
+                          </div>
+                        )}
+
                         {/* Headline */}
                         {ad.headline && (
                           <p className="text-sm font-semibold leading-tight line-clamp-2">
